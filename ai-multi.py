@@ -267,6 +267,55 @@ _WHAT_REMEMBER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Words that anchor "what's going on" to a topic, so it is not a channel recap.
+_TOPIC_ANCHORED_RE = re.compile(
+    r'\b(?:dog|cat|pet|car|computer|phone|pc|bot|script|code|server|game|movie|show|person|user|weather|price|bug|issue|error|problem|autistic|sick|broken|working)\b',
+    re.IGNORECASE,
+)
+
+
+def _is_time_question(text):
+    """Current time/date question, not a historical or event question."""
+    if not text:
+        return False
+    return bool(_TIME_INTENT_RE.search(text)) and not bool(_TIME_NON_CURRENT_RE.search(text))
+
+
+def _detect_review_mode(user_message):
+    """Return (review_mode, is_summary_request) for a message addressed to the bot."""
+    text = user_message or ''
+    review_mode = bool(_REVIEW_INTENT_RE.search(text)) or (text.strip() == '^^')
+    if review_mode:
+        m_go = re.search(
+            r'\bwhat(?:\'s| is| has)?(?: been)? (?:going on|happening|happened)\b',
+            text,
+            re.IGNORECASE,
+        )
+        if m_go:
+            pre_text = text[:m_go.start()].strip()
+            if len(pre_text.split()) >= 3 or _TOPIC_ANCHORED_RE.search(text):
+                review_mode = False
+    # "revise/fix/redo the summary" corrects the last answer, not a new recap.
+    if review_mode and _SUMMARY_CORRECTION_RE.search(text):
+        review_mode = False
+    is_summary_request = review_mode and bool(_SUMMARY_INTENT_RE.search(text))
+    return review_mode, is_summary_request
+
+
+def _personality_command_match(user_message):
+    """Personality-command match, or None when the line is ordinary chat."""
+    text = user_message or ''
+    match = _PERSONALITY_COMMAND_RE.search(text)
+    if not match:
+        return None
+    # Bare "be ..." is everyday chat ("be honest"). It needs a lead-in.
+    if match.group('be') and not match.group('leadin'):
+        return None
+    # A verb deep in a long line or a question is not a command.
+    if match.start() > 20 and ('?' in text or len(text) > 80):
+        return None
+    return match
+
 # Max persistent facts per user
 MAX_USER_FACTS = 200
 
@@ -1610,7 +1659,11 @@ def _format_channel_effect_prompt(effects, bot_nick):
 
 
 def _apply_text_intoxication(bot, channel, reply):
-    """Apply drunkenness, stoned, or crossfaded slurring, hiccups, and text cleanup to the reply string."""
+    """Strip intoxication claims that contradict the channel effect.
+
+    The system prompt is the only source of slurred tone. This does not
+    insert hiccups, stretch vowels, or rewrite spelling.
+    """
     if not channel or not str(channel).startswith('#') or not reply:
         return reply
 
@@ -1622,8 +1675,7 @@ def _apply_text_intoxication(bot, channel, reply):
     has_stoned = 'stoned' in chan_effects
     has_tripping = 'tripping' in chan_effects
 
-    # 1. Cleanup false hallucinations:
-    # If bot is ONLY tipsy/drunk (NOT stoned) and reply mentions weed/crossfaded:
+    # Tipsy-only: a single drink should not talk about weed or being crossfaded.
     if has_drunk and not has_stoned and not has_tripping:
         d_intensity = chan_effects['drunk'].get('intensity', 1)
         if d_intensity == 1:
@@ -1631,62 +1683,16 @@ def _apply_text_intoxication(bot, channel, reply):
             reply = re.sub(r'\b(?:crossfaded|zooted|blazed|high af|baked|stoned)\b', 'tipsy', reply, flags=re.IGNORECASE)
             reply = re.sub(r'\b(?:joint|spliff|blunt|dabs|shrooms|acid)\b', 'drink', reply, flags=re.IGNORECASE)
 
-    # If bot is ONLY stoned (NOT drunk) and reply mentions drunk behaviors:
+    # Stoned-only: drop drunk claims the model invented.
     if has_stoned and not has_drunk and not has_tripping:
         reply = re.sub(r'\*hic\*\s*', '', reply, flags=re.IGNORECASE)
         reply = re.sub(r'\b(?:crossfaded|hammered|plastered|wasted|blackout|drunk|tipsy)\b', 'baked', reply, flags=re.IGNORECASE)
         reply = re.sub(r'\b(?:shots?|beers?|cocktails?|whiskey|bourbon|vodka|tequila|rum)\s+(got me|keep|n )', r'weed \1', reply, flags=re.IGNORECASE)
 
-    # If bot is sobered up (no active drunk/stoned/tripping), remove any hallucinated *hic* or crossfaded
+    # Sobered up: drop leftover slur marks from the earlier state.
     if 'sobered' in chan_effects and not has_drunk and not has_stoned and not has_tripping:
         reply = re.sub(r'\*hic\*\s*', '', reply, flags=re.IGNORECASE)
         reply = re.sub(r'\b(?:crossfaded|zooted|blazed|hammered|plastered)\b', 'sober', reply, flags=re.IGNORECASE)
-
-    # 2. Text slurring & hiccup transformations:
-    if has_drunk:
-        d_intensity = chan_effects['drunk'].get('intensity', 1)
-        if has_stoned:
-            d_intensity = max(d_intensity, 2)
-
-        # Apply slurring and hiccups for intensity >= 2
-        if d_intensity >= 2:
-            words = reply.split()
-            new_words = []
-            for idx, w in enumerate(words):
-                w_clean = w
-                # Slurring rules for intensity >= 3
-                if d_intensity >= 3:
-                    # 's' or 'st' slurs: 'yes' -> 'yessh', 'some' -> 'shome', 'this' -> 'thish'
-                    if len(w) > 3 and random.random() < 0.40 and 's' in w.lower():
-                        w_clean = re.sub(r's([aeiou])', r'sh\1', w_clean, flags=re.IGNORECASE)
-                        w_clean = re.sub(r'([aeiou])s\b', r'\1shhh', w_clean, flags=re.IGNORECASE)
-                    # 'ing' -> 'in''
-                    if w_clean.lower().endswith('ing') and len(w_clean) > 4:
-                        w_clean = w_clean[:-3] + "in'"
-                    # Drop apostrophes
-                    if random.random() < 0.3:
-                        w_clean = w_clean.replace("'", "")
-
-                # Vowel stretching for intensity >= 2
-                if random.random() < (0.20 * d_intensity) and re.search(r'[aeiou]{1,2}', w_clean, re.IGNORECASE):
-                    w_clean = re.sub(r'([aeiou])\b', r'\1\1\1', w_clean, flags=re.IGNORECASE)
-
-                new_words.append(w_clean)
-
-            reply = " ".join(new_words)
-
-            # Insert hiccups (*hic*) based on intensity
-            hiccup_chance = 0.20 * (d_intensity - 1)
-            if random.random() < hiccup_chance and '*hic*' not in reply.lower():
-                word_list = reply.split()
-                if len(word_list) > 2:
-                    insert_idx = random.randint(1, len(word_list) - 1)
-                    word_list.insert(insert_idx, '*hic*')
-                    reply = " ".join(word_list)
-
-            # Blackout dozing for intensity 5
-            if d_intensity == 5 and random.random() < 0.5 and '*snores*' not in reply.lower():
-                reply += " ... *snores*... wait what? lol"
 
     return reply
 
@@ -1925,6 +1931,19 @@ def _url_to_title(url):
     except Exception:
         return ""
 
+def _circuit_is_open(state, now):
+    """True when this channel should pause API calls.
+
+    ``state`` is the per-channel dict from ``grok_api_failures``, or None.
+    At or above CIRCUIT_BREAKER_THRESHOLD failures, the breaker stays open
+    until CIRCUIT_BREAKER_COOLDOWN seconds after the last failure. After
+    that the next call is a probe and this returns False.
+    """
+    if not state or state.get('count', 0) < CIRCUIT_BREAKER_THRESHOLD:
+        return False
+    return (now - state.get('last', 0)) < CIRCUIT_BREAKER_COOLDOWN
+
+
 def _record_api_failure(bot, channel):
     """Bump the circuit-breaker failure state for a channel."""
     api_failures = bot.memory.setdefault('grok_api_failures', {})
@@ -1960,19 +1979,19 @@ def _api_worker(*, bot, trigger, messages, review_mode, is_pm, bot_nick, chan_lo
         channel = target_channel if target_channel else trigger.sender
         api_failures = bot.memory.get('grok_api_failures', {})
         _cb = api_failures.get(channel)
-        if _cb and _cb.get('count', 0) >= CIRCUIT_BREAKER_THRESHOLD:
-            _cb_now = time.time()
-            if _cb_now - _cb.get('last', 0) < CIRCUIT_BREAKER_COOLDOWN:
-                # Announce the outage at most once per cooldown window — but never
-                # for chime-ins, where nobody asked anything.
-                if not is_chimein and _cb_now - _cb.get('announced', 0) >= CIRCUIT_BREAKER_COOLDOWN:
-                    _cb['announced'] = _cb_now
-                    try:
-                        bot.say("Grok API is having persistent issues; try again in a moment.", channel)
-                    except Exception:
-                        pass
-                return
-            # Cooldown elapsed — fall through and use this request as a probe.
+        _cb_now = time.time()
+        if _circuit_is_open(_cb, _cb_now):
+            # Announce the outage at most once per cooldown window — but never
+            # for chime-ins, where nobody asked anything.
+            if not is_chimein and _cb_now - _cb.get('announced', 0) >= CIRCUIT_BREAKER_COOLDOWN:
+                _cb['announced'] = _cb_now
+                try:
+                    bot.say("Grok API is having persistent issues; try again in a moment.", channel)
+                except Exception:
+                    pass
+            return
+        # Cooldown elapsed, or not enough failures — fall through.
+        # A request that arrives after the cooldown is the recovery probe.
 
 
         attempts = 3
@@ -3844,19 +3863,7 @@ def handle(bot, trigger):
                 return
         
         # Check for general personality command
-        _personality_match = _PERSONALITY_COMMAND_RE.search(user_message)
-        if _personality_match:
-            # Bare "be ..." is everyday chat ("be honest, do you like us?") —
-            # only treat it as a command with an explicit lead-in.
-            if _personality_match.group('be') and not _personality_match.group('leadin'):
-                _personality_match = None
-        if _personality_match:
-            # Guard against false positives: if the command verb appears deep
-            # in a long conversational sentence or a question, it's almost
-            # certainly NOT a personality command.
-            _pm_pos = _personality_match.start()
-            if _pm_pos > 20 and ('?' in user_message or len(user_message) > 80):
-                _personality_match = None
+        _personality_match = _personality_command_match(user_message)
         if _personality_match:
             _personality_desc = _personality_match.group('desc').strip()
             # Remove channel/user indicators from the description if present
@@ -3948,22 +3955,7 @@ def handle(bot, trigger):
 
     # ========== END INSTANT CONFIG COMMANDS ==========
 
-    _TOPIC_ANCHORED_RE = re.compile(
-        r'\b(?:dog|cat|pet|car|computer|phone|pc|bot|script|code|server|game|movie|show|person|user|weather|price|bug|issue|error|problem|autistic|sick|broken|working)\b',
-        re.IGNORECASE,
-    )
-    review_mode = bool(_REVIEW_INTENT_RE.search(user_message)) or (user_message.strip() == '^^')
-    if review_mode:
-        m_go = re.search(r'\bwhat(?:\'s| is| has)?(?: been)? (?:going on|happening|happened)\b', user_message, re.IGNORECASE)
-        if m_go:
-            pre_text = user_message[:m_go.start()].strip()
-            if len(pre_text.split()) >= 3 or _TOPIC_ANCHORED_RE.search(user_message):
-                review_mode = False
-    # "revise/fix/redo the summary" is a correction of the bot's last answer,
-    # not a request for a new one — handle it as a normal chat message.
-    if review_mode and _SUMMARY_CORRECTION_RE.search(user_message):
-        review_mode = False
-    is_summary_request = review_mode and bool(_SUMMARY_INTENT_RE.search(user_message))
+    review_mode, is_summary_request = _detect_review_mode(user_message)
 
     if not user_message:
         return
@@ -3971,7 +3963,7 @@ def handle(bot, trigger):
     if re.match(r'^[.!/]', user_message):
         return
 
-    time_mode = bool(_TIME_INTENT_RE.search(user_message)) and not bool(_TIME_NON_CURRENT_RE.search(user_message))
+    time_mode = _is_time_question(user_message)
 
     now = time.time()
     # Rate limit per-user-per-channel so one user's question doesn't block others.
