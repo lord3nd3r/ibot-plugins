@@ -35,6 +35,7 @@ Commands:
     $spam cmdexempt list                - List exempt command prefixes
     $spam copypasta status              - Show copypasta DB stats
     $spam copypasta clear               - Wipe the copypasta DB for this channel
+    $spam ascii on / off                - Allow figlet bursts (#8chan defaults to on)
     $spam help                          - Show help via NOTICE
 """
 
@@ -52,11 +53,19 @@ LOGGER = logging.getLogger('antispam')
 LOGGER.setLevel(logging.DEBUG)
 # File handler — dedicated log file for antispam
 _log_path = os.path.join(os.path.expanduser('~/.sopel'), 'antispam.log')
-_fh = logging.handlers.RotatingFileHandler(_log_path, maxBytes=5*1024*1024, backupCount=3)
-_fh.setLevel(logging.DEBUG)
-_fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)-7s %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
 if not LOGGER.handlers:
-    LOGGER.addHandler(_fh)
+    try:
+        _fh = logging.handlers.RotatingFileHandler(
+            _log_path, maxBytes=5 * 1024 * 1024, backupCount=3,
+        )
+    except OSError:
+        _fh = None
+    if _fh is not None:
+        _fh.setLevel(logging.DEBUG)
+        _fh.setFormatter(logging.Formatter(
+            '%(asctime)s %(levelname)-7s %(message)s', datefmt='%Y-%m-%d %H:%M:%S',
+        ))
+        LOGGER.addHandler(_fh)
 
 B = "\x02"
 COLOR_RESET = "\x03"
@@ -67,6 +76,10 @@ DEFAULT_WINDOW = 8        # seconds — how fast messages must come
 DEFAULT_THRESHOLD = 5     # messages within window to trigger kick
 DEFAULT_UNICODE_THRESHOLD = 3   # unicode art lines within window to trigger kick
 DEFAULT_UNICODE_WINDOW = 30     # seconds — window for unicode art flood detection
+
+# Figlet and ASCII banners are normal in these channels. An explicit
+# `ascii` setting in the channel overrides still wins.
+ASCII_OK_CHANNELS = {'#8chan'}
 
 # Copypasta detection settings
 COPYPASTA_MIN_LENGTH = 60       # minimum normalized chars to fingerprint
@@ -112,6 +125,7 @@ def _get_settings(bot, channel):
         'unicode_threshold': overrides.get('unicode_threshold', DEFAULT_UNICODE_THRESHOLD),
         'unicode_window': overrides.get('unicode_window', DEFAULT_UNICODE_WINDOW),
         'ban': bool(overrides.get('ban', False)),
+        'ascii': overrides['ascii'] if 'ascii' in overrides else channel.lower() in ASCII_OK_CHANNELS,
     }
 
 
@@ -331,6 +345,69 @@ _UNICODE_ART_RANGES = [
 ]
 
 
+def _is_figlet_line(text):
+    """True for one line of figlet or ASCII art, not for a normal sentence.
+
+    A banner is padded with spaces, or it is mostly drawing characters, and
+    one letter does the drawing. A sentence, and a repeated word such as
+    "hahahahaha", has neither of those shapes.
+    """
+    s = str(text).strip()
+    if len(s) < 8:
+        return False
+    letters = [c.lower() for c in s if c.isalpha()]
+    symbols = sum(1 for c in s if not c.isspace() and not c.isalnum())
+    spaces = s.count(' ')
+    banner_shape = (
+        (spaces / len(s) >= 0.25)
+        or (len(letters) < 4 and symbols >= 3)
+        or (symbols >= 3 and spaces >= 2)
+    )
+    if not banner_shape:
+        return False
+    if len(letters) < 4:
+        return symbols >= 3
+    counts = {}
+    for char in letters:
+        counts[char] = counts.get(char, 0) + 1
+    top = max(counts.values()) / len(letters)
+    real_words = 0
+    for word in re.findall(r"[A-Za-z]{3,}", s):
+        word_counts = {}
+        for char in word.lower():
+            word_counts[char] = word_counts.get(char, 0) + 1
+        if max(word_counts.values()) / len(word) < 0.7:
+            real_words += 1
+    if top >= 0.4 and real_words <= 2:
+        return True
+    if spaces / len(s) >= 0.35 and real_words <= 1 and top >= 0.3:
+        return True
+    return False
+
+
+def _burst_is_ascii(texts):
+    """True when a flood burst is a figlet banner plus its short leftover lines.
+
+    Braille and box-drawing floods stay on the unicode-art check. Only the
+    texts inside the rate window should be passed in.
+    """
+    if not texts:
+        return False
+    long_art = 0
+    short = 0
+    other = 0
+    for text in texts:
+        if _is_figlet_line(text):
+            long_art += 1
+        elif len(str(text).strip()) <= 6:
+            short += 1
+        else:
+            other += 1
+    if long_art == 0:
+        return False
+    return (long_art + short) / len(texts) >= 0.6 and other <= long_art
+
+
 def _is_unicode_art(text, min_length=20, ratio=0.3):
     """Detect messages that are predominantly unicode art (braille, box drawing, etc.).
 
@@ -435,12 +512,18 @@ def _track_text(bot, channel, hostmask, text):
         texts[key] = [(t, txt) for t, txt in texts[key] if t > cutoff]
 
 
-def _get_tracked_texts(bot, channel, hostmask):
-    """Get recently tracked texts for a user."""
+def _get_tracked_texts(bot, channel, hostmask, since=None):
+    """Get recently tracked texts for a user.
+
+    ``since`` is the rate-window cutoff. Texts at or before that time stay
+    out, so an earlier conversation does not hide a banner pasted just now.
+    """
     key = (channel, hostmask)
     with bot.memory['spam_lock']:
         entries = bot.memory['spam_texts'].get(key, [])
-        return [txt for _, txt in entries]
+        if since is None:
+            return [txt for _, txt in entries]
+        return [txt for t, txt in entries if t > since]
 
 
 # ========================= GROK AI CLASSIFICATION =========================
@@ -606,8 +689,11 @@ def on_message(bot, trigger):
     _track_text(bot, channel, hostmask, message_text)
 
     # --- Copypasta detection (learned spam fingerprints) ---
+    # A figlet line in a channel that allows ASCII is not copypasta, even
+    # when an earlier kick stored that banner's shingles.
     ratio, matched, total = _check_copypasta(bot, channel, message_text)
-    if ratio >= COPYPASTA_MATCH_RATIO:
+    ascii_line = _is_figlet_line(message_text)
+    if ratio >= COPYPASTA_MATCH_RATIO and not (settings.get('ascii') and ascii_line):
         LOGGER.info(
             "Antispam: Copypasta match from %s in %s — %.0f%% (%d/%d shingles)",
             nick, channel, ratio * 100, matched, total,
@@ -619,7 +705,7 @@ def on_message(bot, trigger):
         return
 
     # --- Grok AI classification (catches new copypasta not yet fingerprinted) ---
-    if _grok_classify_spam(bot, channel, hostmask, message_text):
+    if not (settings.get('ascii') and ascii_line) and _grok_classify_spam(bot, channel, hostmask, message_text):
         LOGGER.info("Antispam: Grok AI flagged spam from %s in %s", nick, channel)
         _kick_spammer(bot, nick, channel, hostmask, settings, 0,
                      reason="AI detected copypasta spam")
@@ -627,6 +713,7 @@ def on_message(bot, trigger):
         return
 
     # --- Unicode art flood detection (stricter threshold) ---
+    # Figlet allowance does not cover braille or box-drawing floods.
     if _is_unicode_art(message_text):
         unicode_triggered = False
         with bot.memory['spam_lock']:
@@ -667,6 +754,15 @@ def on_message(bot, trigger):
             triggered = True
 
     if triggered:
+        window_start = now - settings['window']
+        if settings.get('ascii') and _burst_is_ascii(
+            _get_tracked_texts(bot, channel, hostmask, since=window_start)
+        ):
+            LOGGER.info(
+                "Antispam: ASCII art burst from %s in %s — allowed (%d msgs)",
+                nick, channel, count,
+            )
+            return
         _kick_spammer(bot, nick, channel, hostmask, settings, count)
 
 
@@ -799,6 +895,7 @@ def cmd_spam(bot, trigger):
         'cmdexempt': lambda: _cmd_cmdexempt(bot, trigger, channel, args[1:]),
         'copypasta': lambda: _cmd_copypasta(bot, trigger, channel, args[1:]),
         'ban':       lambda: _cmd_ban(bot, trigger, channel, args[1:]),
+        'ascii':     lambda: _cmd_ascii(bot, trigger, channel, args[1:]),
         'help':      lambda: _cmd_help(bot, trigger),
     }
 
@@ -832,6 +929,7 @@ def _cmd_status(bot, trigger, channel):
         f"🎯 Threshold: {B}{settings['threshold']}{B} msgs{SEP}"
         f"🎨 Unicode: {B}{settings['unicode_threshold']}{B} msgs / {B}{settings['unicode_window']}s{B}{SEP}"
         f"🔨 Bans: {B}{'on' if settings['ban'] else 'off'}{B}{SEP}"
+        f"🎨 ASCII: {B}{'on' if settings.get('ascii') else 'off'}{B}{SEP}"
         f"🔑 Triggers: {B}{len(triggers)}{B}{SEP}"
         f"👤 Exempt users: {B}{len(exempt_users)}{B}{SEP}"
         f"🎮 Exempt cmds: {B}{len(exempt_cmds)}{B}{SEP}"
@@ -888,6 +986,27 @@ def _cmd_ban(bot, trigger, channel, args):
         return
 
     bot.reply(f"⚠️ Usage: {B}$spam ban{B} <on|off>")
+
+
+def _cmd_ascii(bot, trigger, channel, args):
+    """Allow or kick figlet and ASCII bursts. Usage: $spam [#chan] ascii [on|off]"""
+    sub = args[0].lower() if args else 'status'
+    if sub in ('status', 'show'):
+        enabled = _get_settings(bot, channel)['ascii']
+        state = "allowed" if enabled else "kicked with other floods"
+        bot.say(f"🎨 ASCII art is {B}{state}{B} in {B}{channel}{B}.")
+        return
+    if sub in ('on', 'enable', 'yes'):
+        _save_setting(bot, channel, 'ascii', True)
+        bot.say(f"🎨 ASCII art bursts are {B}allowed{B} in {B}{channel}{B}.")
+        LOGGER.info("Antispam: ASCII allowed in %s by %s", channel, trigger.nick)
+        return
+    if sub in ('off', 'disable', 'no'):
+        _save_setting(bot, channel, 'ascii', False)
+        bot.say(f"🎨 ASCII art bursts are {B}kicked{B} with other floods in {B}{channel}{B}.")
+        LOGGER.info("Antispam: ASCII kicks enabled in %s by %s", channel, trigger.nick)
+        return
+    bot.reply(f"⚠️ Usage: {B}$spam ascii{B} <on|off>")
 
 
 def _cmd_set(bot, trigger, channel, args):
@@ -1111,6 +1230,7 @@ def _cmd_help(bot, trigger):
     bot.notice(f"  {B}$spam on{B} / {B}off{B}                          — Enable / disable in this channel", nick)
     bot.notice(f"  {B}$spam ban{B}                              — Show whether kicks also set a ban", nick)
     bot.notice(f"  {B}$spam ban on{B} / {B}off{B}                     — Ban *!*@host on kick (off by default)", nick)
+    bot.notice(f"  {B}$spam ascii on{B} / {B}off{B}                   — Allow figlet and ASCII bursts (on in #8chan)", nick)
     bot.notice(f"  {B}$spam set window <sec>{B}                  — Rate detection window (3–120s, default {DEFAULT_WINDOW})", nick)
     bot.notice(f"  {B}$spam set threshold <n>{B}                  — Message count to trigger (3–30, default {DEFAULT_THRESHOLD})", nick)
     bot.notice(f"  {B}$spam set unicode_threshold <n>{B}          — Unicode art lines to trigger (2–10, default {DEFAULT_UNICODE_THRESHOLD})", nick)

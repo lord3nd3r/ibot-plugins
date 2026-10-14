@@ -41,6 +41,8 @@ The plugin uses five layers of spam detection:
    * Specifically trained to allow normal offensive language, trolling, and crude humor, while targeting repetitive walls of text, quoted articles, or URL dumps.
    * Rate-limited to one check per user per 10 seconds.
 
+Figlet and ASCII banners are normal in `#8chan`. A burst that is a banner, plus the short leftover lines of that banner, does not trip the rate kick there. Copypasta and the Grok check also skip a figlet line in a channel with ASCII allowed, so a banner learned from an earlier kick does not instant-kick the next one. `$spam ascii off` in `#8chan`, or `$spam ascii on` anywhere else, overrides that. Braille and box-drawing floods still use the unicode-art kick.
+
 ---
 
 ## Autovoice Revocation
@@ -73,6 +75,7 @@ Commands work in the channel (`$spam trigger add ...`) or in PM when the bot can
 | `$spam` | `cmdexempt del <prefix>` | Remove a command prefix exemption | `$spam cmdexempt del !bang` |
 | `$spam` | `copypasta status` | View copypasta shingles database statistics and settings | `$spam copypasta status` |
 | `$spam` | `copypasta clear` | Wipe the learned copypasta shingles database for this channel | `$spam copypasta clear` |
+| `$spam` | `ascii on` / `ascii off` | Allow figlet and ASCII bursts through the rate kick. On in `#8chan` unless an op turns it off. Other channels stay off until `$spam ascii on`. Braille floods still kick | `$spam ascii off` |
 | `$spam` | `help` | Send a command reference guide via NOTICE | `$spam help` |
 
 ---
