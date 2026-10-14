@@ -436,8 +436,7 @@ class AiMultiSection(types.StaticSection):
         default=(
             "You are an IRC bot. You're sharp, geeky, and a little "
             "sarcastic — but you genuinely like the people here. Talk like an IRC veteran: "
-            "use lowercase when it feels natural, drop in casual filler like 'ngl', "
-            "'tbh', 'lmao', 'fr' occasionally, use sentence fragments, and don't always give "
+            "use lowercase when it feels natural, use sentence fragments, and don't always give "
             "complete polished answers — sometimes just react. You can be blunt, funny, or "
             "deadpan depending on the vibe. Don't start messages with your name. Don't lecture "
             "or moralize. If someone needs real help, actually help. Keep responses short and "
@@ -445,6 +444,9 @@ class AiMultiSection(types.StaticSection):
             "figlets — just talk. Occasionally start replies with filler words like a real person "
             "would — 'oh', 'wait', 'hmm', 'yo' — not every time, just enough to sound natural. "
             "Sometimes give a one-word reaction instead of a full answer. "
+            "Do not end a reply with someone's nick. "
+            "Do not end a reply with 'tbh', 'ngl', 'fr', or 'lmao'. "
+            "Use 'lol' only when something is actually funny, not on an ordinary answer. "
             "IMPORTANT: When discussing news or search results, use numbered citations like [1], [2] "
             "next to facts, but do NOT include URLs in your response. "
             "IMPORTANT — IRC is plain text only: no colors, images, ASCII art, figlet, or formatted output. "
@@ -1726,6 +1728,143 @@ def _apply_text_intoxication(bot, channel, reply):
 
     return reply
 
+_TRAILING_FILLER_RE = re.compile(
+    r'(?:[\s,]*\b(?:tbh|ngl|fr|lmao)\b[!?.]*)+\s*$',
+    re.IGNORECASE,
+)
+_TRAILING_FILLER_WITH_LOL_RE = re.compile(
+    r'(?:[\s,]*\b(?:tbh|ngl|fr|lmao|lol)\b[!?.]*)+\s*$',
+    re.IGNORECASE,
+)
+# Tipsy prompt asks for these. Once they land in the channel log the model
+# copies them onto sober replies, so they are removed on the way in and out.
+_HAHA_MAN_RE = re.compile(
+    r'(?:[\s,]*\bhaha man\b[!?.]*\s*🍺?)+[\s!.?]*$',
+    re.IGNORECASE,
+)
+_LEADING_YESSS_RE = re.compile(
+    r'^(?:yesss+\b[!?.:,]*\s*)+',
+    re.IGNORECASE,
+)
+
+
+def _strip_trailing_filler(text, include_lol=False):
+    """Drop a tacked-on filler suffix. A reply that is only that word stays.
+
+    Outgoing replies keep a real 'lol'. Lines fed back into the prompt drop
+    it too, so the bot does not copy its own ending.
+    """
+    if not text:
+        return text
+    pattern = _TRAILING_FILLER_WITH_LOL_RE if include_lol else _TRAILING_FILLER_RE
+    stripped = pattern.sub('', text)
+    stripped = _HAHA_MAN_RE.sub('', stripped)
+    stripped = _LEADING_YESSS_RE.sub('', stripped).strip()
+    if not stripped:
+        return text
+    return stripped
+
+
+# A trailing nick after one of these is the object of the sentence
+# ("agree with snowo", "ask snowo"), not a vocative.
+_VOCATIVE_KEEP_RE = re.compile(
+    r'\b(?:with|to|for|about|at|from|by|of|on|like|than|and|or|vs\.?|versus|'
+    r'ask|tell|see|ping|kick|ban|mean|call|love|hate|let|make|get|got|'
+    r'want|wants|wanted|need|needs|nick)\s*$',
+    re.IGNORECASE,
+)
+_TRAILING_NICK_RE = re.compile(
+    r'[\s,]+\b([A-Za-z][A-Za-z0-9_\-\[\]\\^{}|`]{1,30})\b[!?.]*\s*$'
+)
+_LEADING_ADDRESS_RE = re.compile(
+    r'^([A-Za-z][A-Za-z0-9_\-\[\]\\^{}|`]{1,30})[,:]\s+'
+)
+
+
+def _strip_trailing_nick(text, nicks):
+    """Drop a vocative nick stuck on the end of a long reply.
+
+    "standards snowo" loses the name. "agree with snowo" and "ask snowo" stay.
+    A short reply that is only the nick stays.
+    """
+    if not text or not nicks:
+        return text
+    known = {str(n).lower() for n in nicks if n}
+    if not known:
+        return text
+    match = _TRAILING_NICK_RE.search(text)
+    if not match or match.group(1).lower() not in known:
+        return text
+    head = text[:match.start()].rstrip(' ,')
+    if len(head.split()) < 4 or _VOCATIVE_KEEP_RE.search(head):
+        return text
+    return head
+
+
+def _strip_leading_address(text, nicks):
+    """Drop a 'Nick:' prefix the bot added on a previous send.
+
+    The channel log stores that prefix on the bot's own line. Left in the
+    prompt, the model keeps answering that person.
+    """
+    if not text or not nicks:
+        return text
+    known = {str(n).lower() for n in nicks if n}
+    match = _LEADING_ADDRESS_RE.match(text)
+    if not match or match.group(1).lower() not in known:
+        return text
+    rest = text[match.end():].strip()
+    return rest or text
+
+
+def _clean_own_line(text, nicks):
+    """Clean one of the bot's old lines before it goes back into a prompt."""
+    text = _strip_trailing_filler(text, include_lol=True)
+    text = _strip_leading_address(text, nicks)
+    return _strip_trailing_nick(text, nicks)
+
+
+def _nicks_for_reply(bot, trigger):
+    """Nicks a reply might be addressing: the asker, plus who is in the channel."""
+    nicks = set()
+    try:
+        nick = getattr(trigger, 'nick', None)
+        if nick:
+            nicks.add(str(nick).lower())
+    except Exception:
+        pass
+    channel = ''
+    try:
+        channel = str(getattr(trigger, 'sender', '') or '')
+    except Exception:
+        channel = ''
+    if channel.startswith('#'):
+        try:
+            channels = getattr(bot, 'channels', {}) or {}
+            chan = channels.get(channel) or channels.get(channel.lower())
+            users = getattr(chan, 'users', None) if chan is not None else None
+            if users:
+                for user in users:
+                    nicks.add(str(user).lower())
+        except Exception:
+            pass
+        try:
+            memory = getattr(bot, 'memory', {}) or {}
+            dq = (memory.get('grok_channel_log') or {}).get(channel.lower())
+            if dq:
+                for row in list(dq)[-80:]:
+                    nicks.add(str(row[0]).lower())
+        except Exception:
+            pass
+    try:
+        bot_nick = getattr(bot, 'nick', None)
+        if bot_nick:
+            nicks.discard(str(bot_nick).lower())
+    except Exception:
+        pass
+    return nicks
+
+
 def sanitize_reply(bot, trigger, reply):
     # Strip raw <function_call> XML that leaks when the model tries to use
     # tools that weren't provided in the request payload.
@@ -1766,6 +1905,11 @@ def sanitize_reply(bot, trigger, reply):
             pass
         reply = reply[:TRUNCATED_REPLY_LENGTH] + " […]"
 
+    reply = _strip_trailing_filler(reply)
+    try:
+        reply = _strip_trailing_nick(reply, _nicks_for_reply(bot, trigger))
+    except Exception:
+        pass
     return reply
 
 
@@ -3098,6 +3242,8 @@ def _enqueue_channel_directive(bot, trigger, target_channel, directive_text, is_
         with chan_lock:
             chan_log_dq = bot.memory.get('grok_channel_log', {}).get(target_chan_low)
             if chan_log_dq:
+                _replay_nicks = {str(n).lower() for n, _, _ in chan_log_dq}
+                _replay_nicks.discard(bot_nick.lower())
                 bg_collected = []
                 bg_chars = 0
                 for n, t, _ in reversed(chan_log_dq):
@@ -3106,6 +3252,8 @@ def _enqueue_channel_directive(bot, trigger, target_channel, directive_text, is_
                         break
                     if len(bg_collected) >= 150:
                         break
+                    if n.lower() == bot_nick.lower():
+                        t = _clean_own_line(t, _replay_nicks)
                     bg_collected.append((n, t))
                     bg_chars += l
                 bg_collected.reverse()
@@ -3807,7 +3955,11 @@ def handle(bot, trigger, _intent_decided=False):
                             _chimein_last[_ch_key] = _now
                             # Build a chime-in request from the live conversation only
                             _chimein_lines = []
+                            _chime_nicks = {str(_n).lower() for _n, _ in _recent_lines[-40:]}
+                            _chime_nicks.discard(bot.nick.lower())
                             for _cn, _ct in _recent_lines[-40:]:
+                                if _cn.lower() == bot.nick.lower():
+                                    _ct = _clean_own_line(_ct, _chime_nicks)
                                 _chimein_lines.append(f"{_cn}: {_ct}")
                             _chimein_bg = "\n".join(_chimein_lines)
                             _bot_nick = bot.nick
@@ -3816,8 +3968,10 @@ def handle(bot, trigger, _intent_decided=False):
                                 "You just saw something in the conversation that caught your eye and you want to jump in. "
                                 "React naturally — laugh at something funny, agree, disagree, add a quip, drop a one-liner, "
                                 "or just vibe. Keep it SHORT (under 100 chars ideally). "
-                                "Do NOT address anyone by name unless it's natural. Do NOT start with your own name. "
-                                "Talk like a real IRC user: lowercase ok, slang ok, 'lol' 'ngl' 'tbh' 'fr' ok. "
+                                "Do NOT address anyone by name unless it's natural. Do not end with someone's nick. Do NOT start with your own name. "
+                                "Talk like a real IRC user: lowercase ok, slang ok. "
+                                "Do not end a reply with 'tbh', 'ngl', 'fr', or 'lmao'. "
+                                "Use 'lol' only when something is actually funny, not on an ordinary reply. "
                                 "Sometimes just react with one word. Do NOT summarize or explain what people said. "
                                 "Single line only — this is IRC. "
                                 "Write in the same language the channel is currently speaking. "
@@ -4328,7 +4482,9 @@ def handle(bot, trigger, _intent_decided=False):
             "role": "system",
             "content": (
                 f"Current date/time for {trigger.nick}: {now_str}. Use this ONLY if {trigger.nick} explicitly asks for the time or date in their message — do NOT volunteer it unprompted. "
-                f"Your IRC nick is '{bot_nick}'. You're talking to {trigger.nick}. "
+                f"Your IRC nick is '{bot_nick}'. You are answering {trigger.nick}. "
+                f"Do not end a reply with a nick, including {trigger.nick}. "
+                f"Mention a nick only when the sentence is about that person. "
                 f"ALWAYS reply in the same language {trigger.nick}'s message is written in — "
                 f"German gets German, Dutch gets Dutch, English gets English, and so on. "
                 f"You also run game/utility plugins ($ commands like $bet, $mug, $coins, etc.). "
@@ -4337,7 +4493,9 @@ def handle(bot, trigger, _intent_decided=False):
                 f"For news or current events, search the web and give real details. "
                 f"Include raw deep-link URLs for articles you cite (the system strips and reformats them). "
                 f"Do NOT use markdown links. If you can't find an exact URL, don't make one up. "
-                f"Single line only — this is IRC. No newlines."
+                f"Single line only — this is IRC. No newlines. "
+                f"Do not end a reply with 'tbh', 'ngl', 'fr', or 'lmao'. "
+                f"Use 'lol' only when something is actually funny, not on an ordinary answer."
             ),
         },
         {"role": "system", "content": _UNTRUSTED_GUARD},
@@ -4494,6 +4652,11 @@ def handle(bot, trigger, _intent_decided=False):
         relevant_turns = collected
 
     if not review_mode:
+        _replay_nicks = set()
+        try:
+            _replay_nicks.add(str(trigger.nick).lower())
+        except Exception:
+            pass
         if not is_pm:
             try:
                 now_ts = time.time()
@@ -4504,6 +4667,8 @@ def handle(bot, trigger, _intent_decided=False):
                     if chan_log_dq:
                         channel_bg = [(n, t, ts) for n, t, ts in chan_log_dq if now_ts - ts <= 10800]
                 unique_bg = channel_bg  # already in chronological order
+                _replay_nicks.update(str(n).lower() for n, _, _ in unique_bg)
+                _replay_nicks.discard(bot_nick.lower())
                 BG_MAX_LINES = 150
                 bg_collected = []
                 bg_chars = 0
@@ -4531,6 +4696,8 @@ def handle(bot, trigger, _intent_decided=False):
                         break
                     if len(bg_collected) >= BG_MAX_LINES:
                         break
+                    if n.lower() == bot_nick.lower():
+                        t = _clean_own_line(t, _replay_nicks)
                     bg_collected.append((n, t))
                     bg_chars += l
                 bg_collected.reverse()
@@ -4585,6 +4752,9 @@ def handle(bot, trigger, _intent_decided=False):
                             if chan_log_dq:
                                 channel_bg = [(n, t) for n, t, _ in chan_log_dq]
                         BG_MAX_LINES = 150
+                        _pm_nicks = {str(n).lower() for n, _ in channel_bg}
+                        _pm_nicks.discard(bot_nick.lower())
+                        _replay_nicks.update(_pm_nicks)
                         bg_collected = []
                         bg_chars = 0
                         for n, t in reversed(channel_bg):
@@ -4593,6 +4763,8 @@ def handle(bot, trigger, _intent_decided=False):
                                 break
                             if len(bg_collected) >= BG_MAX_LINES:
                                 break
+                            if n.lower() == bot_nick.lower():
+                                t = _clean_own_line(t, _pm_nicks)
                             bg_collected.append((n, t))
                             bg_chars += l
                         bg_collected.reverse()
@@ -4702,7 +4874,10 @@ def handle(bot, trigger, _intent_decided=False):
 
         for r, text in relevant_turns[-MAX_HISTORY_PER_USER:]:
             role = "assistant" if r == "assistant" or r == bot_nick else "user"
-            content = _wrap_user_text(text) if role == "user" else text
+            if role == "user":
+                content = _wrap_user_text(text)
+            else:
+                content = _clean_own_line(text, _replay_nicks)
             messages.append({"role": role, "content": content})
 
         # Inject channel effect prompt AFTER all history turns so it's the last
@@ -4728,8 +4903,13 @@ def handle(bot, trigger, _intent_decided=False):
                 f"Do NOT just share your own personal hot take or opinion on the topic — your primary job is to inform {trigger.nick} what was said and discussed. "
                 "If the log is empty or there has been no real conversation, say so directly."
             )
+            _review_nicks = {str(nick).lower() for nick, _ in relevant_turns}
+            _review_nicks.discard(bot_nick.lower())
+            _review_nicks.discard('assistant')
             bg_lines = []
             for nick, text in relevant_turns[-REVIEW_MAX_ENTRIES:]:
+                if nick.lower() == 'assistant' or nick.lower() == bot_nick.lower():
+                    text = _clean_own_line(text, _review_nicks)
                 bg_lines.append(f"{nick}: {text}")
             background = _clip_excerpt("\n".join(bg_lines))
             if background.strip():
@@ -4754,8 +4934,13 @@ def handle(bot, trigger, _intent_decided=False):
                 "Just talk like you've been sitting in the channel the whole time. "
                 "If the log is empty, say so briefly. Single line only — this is IRC."
             )
+            _review_nicks = {str(nick).lower() for nick, _ in relevant_turns}
+            _review_nicks.discard(bot_nick.lower())
+            _review_nicks.discard('assistant')
             bg_lines = []
             for nick, text in relevant_turns[-REVIEW_MAX_ENTRIES:]:
+                if nick.lower() == 'assistant' or nick.lower() == bot_nick.lower():
+                    text = _clean_own_line(text, _review_nicks)
                 bg_lines.append(f"{nick}: {text}")
             background = _clip_excerpt("\n".join(bg_lines))
             if background.strip():

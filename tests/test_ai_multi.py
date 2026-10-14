@@ -77,6 +77,69 @@ def test_sanitize_suppresses_box_drawing_art(ai):
     assert out == "I was gonna draw something cool… but I won't flood the channel"
 
 
+def test_strip_trailing_filler_keeps_a_real_lol(ai):
+    assert ai._strip_trailing_filler('no clue on his race tbh') == 'no clue on his race'
+    assert ai._strip_trailing_filler('yesss no clue on his race tbh') == 'no clue on his race'
+    sample = 'yesss energy field spell exists in rifts haha man 🍺'
+    assert ai._strip_trailing_filler(sample) == 'energy field spell exists in rifts'
+    assert ai.sanitize_reply(_Bot(), _Trigger(), sample) == 'energy field spell exists in rifts'
+    assert ai._strip_trailing_filler('haha man 🍺') == 'haha man 🍺'
+    assert ai._strip_trailing_filler('tbh') == 'tbh'
+    assert ai._strip_trailing_filler("that's funny lol") == "that's funny lol"
+    assert ai._strip_trailing_filler("that's funny lol", include_lol=True) == "that's funny"
+    assert ai.sanitize_reply(_Bot(), _Trigger(), 'no clue on his race tbh') == 'no clue on his race'
+
+
+def test_strip_trailing_nick_keeps_real_mentions(ai):
+    nicks = {'snowo', 'end3r'}
+    law = (
+        'yes, stand your ground applies to everyone including leo '
+        'but they have separate use-of-force standards snowo'
+    )
+    assert ai._strip_trailing_nick(law, nicks) == (
+        'yes, stand your ground applies to everyone including leo '
+        'but they have separate use-of-force standards'
+    )
+    about = 'no idea, snowo spouting random acronyms after the unban.'
+    assert ai._strip_trailing_nick(about, nicks) == about
+    drop = 'indiana stand your ground, snowo with the random drop.'
+    assert ai._strip_trailing_nick(drop, nicks) == drop
+    assert ai._strip_trailing_nick('I agree with snowo', nicks) == 'I agree with snowo'
+    assert ai._strip_trailing_nick('go ask snowo', nicks) == 'go ask snowo'
+    assert ai._strip_trailing_nick('snowo', nicks) == 'snowo'
+    own = 'Snowo: florida stand your ground applies to everyone including leo snowo.'
+    cleaned = ai._clean_own_line(own, nicks)
+    assert 'snowo' not in cleaned.lower()
+    assert cleaned.startswith('florida stand your ground')
+
+
+def test_sanitize_reply_drops_trailing_channel_nick(ai):
+    class Bot(_Bot):
+        nick = 'glitchy'
+        channels = {}
+        memory = {
+            'grok_channel_log': {
+                '#8chan': [
+                    ('Snowo', 'Indiana stand your ground', 1),
+                    ('End3r', 'glitchy explain that law', 2),
+                ],
+            },
+        }
+
+    class Trig:
+        nick = 'End3r'
+        sender = '#8chan'
+
+    reply = (
+        'florida and indiana both drop the duty to retreat '
+        'if you reasonably fear death or great bodily harm snowo'
+    )
+    cleaned = ai.sanitize_reply(Bot(), Trig(), reply)
+    assert not cleaned.lower().endswith('snowo')
+    assert 'duty to retreat' in cleaned
+    assert ai.sanitize_reply(_Bot(), _Trigger(), "that's funny lol") == "that's funny lol"
+
+
 def test_sanitize_truncates_long_replies(ai):
     reply = 'a' * (ai.MAX_REPLY_LENGTH + 50)
     out = ai.sanitize_reply(_Bot(), _Trigger(), reply)
