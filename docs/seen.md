@@ -1,5 +1,7 @@
 # 👁️ Seen — Last Seen Tracker
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Tracks the last time a user spoke in a channel and reports it on demand.
 
 ---
@@ -37,3 +39,7 @@ Tracks the last time a user spoke in a channel and reports it on demand.
 - Asking about yourself or the bot returns a witty reply instead.
 - Messages longer than 200 characters are truncated.
 - `/me` actions are tracked and displayed as `* nick action`.
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

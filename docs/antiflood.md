@@ -1,26 +1,34 @@
 # 🛡️ Antiflood Protection (antiflood)
 
-Join/Part Flood Protection for Sopel. Detects and bans users who cycle joins/parts or quit/rejoins too many times in a short window.
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
+Join/Part flood protection for ibot. Detects and bans users who cycle joins/parts or quit/rejoins too many times in a short window.
 
 ---
 
 ## Setup
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/antiflood.py
 ```
 
-**2. Configure `sopel.cfg` (Optional):**
+**2. Configure your ibot `.cfg` (optional):**
 Default settings can be defined in the `[antiflood]` section:
 ```ini
 [antiflood]
-window = 300            # Time window in seconds to track join events (default: 300)
-threshold = 3           # Number of joins within the window to trigger ban (default: 3)
-ban_duration = 600      # Auto-unban delay in seconds; 0 = permanent (default: 600)
-banmask_style = host    # 'host' (*!*@host) or 'ident' (*!user@host) (default: host)
-exempt_modes = vhoaq    # Channel mode chars exempt from bans (v=voice, h=halfop, o=op, a=admin, q=owner)
-enabled = true          # Global enable/disable switch (default: true)
+# Time window in seconds to track join events (default: 300)
+window = 300
+# Number of joins within the window to trigger ban (default: 3)
+threshold = 3
+# Auto-unban delay in seconds; 0 = permanent (default: 600)
+ban_duration = 600
+# 'host' (*!*@host) or 'ident' (*!user@host) (default: host)
+banmask_style = host
+# Channel mode chars exempt from bans (v=voice, h=halfop, o=op, a=admin, q=owner)
+exempt_modes = vhoaq
+# Global enable/disable switch (default: true)
+enabled = true
 ```
 
 **Note:** Antiflood is **disabled by default per channel**. You must explicitly enable it in each channel using the `$flood on` command.
@@ -53,3 +61,7 @@ All commands require **bot admin** privileges.
 * **Exemptions**: Users with configured exempt channel modes (default: `+v`, `+h`, `+o`, `+a`, `+q`) or who are whitelisted are bypassed. The antiflood list and the JPQ list are both checked, so an entry on either one skips both bans.
 * **Grace Period**: After a bot-initiated kick, a 60-second grace period applies to the hostmask to prevent event loops.
 * **Auto-Unban**: Banned users are automatically unbanned after `ban_duration` seconds (if duration > 0) via a background timer. Pending unbans are saved, so they still happen after a bot restart (overdue ones run about a minute after the plugin loads).
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

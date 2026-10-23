@@ -1,5 +1,7 @@
 # ᓚᘏᗢ Cat (cat)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Print a random unicode cat.
 
 ---
@@ -30,3 +32,7 @@ Print a random unicode cat.
 <User> $cat
 <Glitchy> ฅ^•ﻌ•^ฅ
 ```
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

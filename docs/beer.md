@@ -1,5 +1,7 @@
 # 🍺 Bartender (beer)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Virtual bartender with a tip economy integrated directly with the **mug** game's coin system.
 
 ---
@@ -8,7 +10,7 @@ Virtual bartender with a tip economy integrated directly with the **mug** game's
 
 **No config needed.** Just drop the script in place and it works.
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/beer.py
 ```
@@ -138,3 +140,6 @@ When users buy drinks or food for the bot (e.g. `$beer <botnick>`, `$shot <botni
 * The bot's AI responses in the channel dynamically reflect its drunkenness level in real-time.
 * **Crossfaded Mode**: If the bot is passed weed (`$pass <botnick>` in `weed.py`) AND bought drinks, it becomes **crossfaded** — blending cosmic stoner thoughts with drunk slurs, hiccups, and affection!
 
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

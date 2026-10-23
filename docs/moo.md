@@ -1,5 +1,7 @@
 # 🐄 Moo Counter (moo)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Say `moo` in chat to increment your counter. Full network leaderboards. Includes cowsay-style one-liners, linux nerd moos, legendary moos, and sudo moo gambles.
 
 ---
@@ -10,14 +12,14 @@ Say `moo` in chat to increment your counter. Full network leaderboards. Includes
 ```bash
 pip install sqlalchemy
 ```
-(Usually already installed with Sopel.)
+(Already installed as an ibot dependency.)
 
-**2. Place the script:**
+**2. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/moo.py
 ```
 
-**3. Add to your Sopel `.cfg` file (optional — all have defaults):**
+**3. Add to your ibot `.cfg` file (optional — all have defaults):**
 ```ini
 [moo]
 # Cooldown between moos in seconds (default: 6)
@@ -40,7 +42,7 @@ leet_moo = true
 max_rate_per_15sec = 0
 ```
 
-**Data storage:** Moo counts are stored in Sopel's built-in `bot.db` via SQLAlchemy — no extra database setup needed.
+**Data storage:** Moo counts are stored in the bot's built-in `bot.db` via SQLAlchemy — no extra database setup needed.
 
 ---
 
@@ -118,3 +120,7 @@ max_rate_per_15sec = 0
 ```
 /msg Glitchy $mooreset SpamMooer
 ```
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

@@ -1,5 +1,7 @@
 # 📬 Tell — Offline Messages
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Leave messages for users who aren't currently active. When they next speak in any channel the bot is in, they receive a PM for each pending message.
 
 ---
@@ -54,3 +56,7 @@ Leave messages for users who aren't currently active. When they next speak in an
 - Delivery uses PM so it doesn't clutter the channel.
 - Limits: messages are at most **350** characters; a nick can have at most **20** undelivered messages waiting, and one sender at most **30** undelivered messages queued in total. `$tell` can be used once every 5 seconds per user and `$showtells` once every 10 seconds (extra uses are ignored silently).
 - Delivered messages are removed from the database (old delivered rows are cleaned up when the plugin loads).
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

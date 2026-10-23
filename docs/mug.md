@@ -1,24 +1,26 @@
 # 💰 Coins & Mugging (mug)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 IRC economy game with coins, mugging, bounties, a shop, and gambling.
 
 ---
 
 ## Setup
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/mug.py
 ```
 
-**2. Add to your Sopel `.cfg` file (optional):**
+**2. Add to your ibot `.cfg` file (optional):**
 ```ini
 [mug_game]
 # Enable or disable the mug game (default: true)
 enabled = true
 ```
 
-**Data storage:** Game data (balances, bounties, high scores, etc.) is stored in Sopel's built-in `bot.db` — no extra database setup needed.
+**Data storage:** Game data (balances, bounties, high scores, etc.) is stored in the bot's built-in `bot.db` — no extra database setup needed.
 
 > **Auto-Voice:** Users with 500+ coins automatically get `+v` in channels where the bot has ops. This is built-in and requires no extra config.
 
@@ -353,3 +355,7 @@ enabled = true
 
 - **Auto-Voice:** Users with ≥500 coins automatically receive `+v` in configured channels. Drops below 500 = devoiced. Ops/hops/owners are exempt.
 - **High Score Topic:** When a player beats the all-time high score, the bot automatically updates the channel topic in configured channels (default: `#mug`). The high score appears at the end of the topic as `┃ 🏆 High Score: nick (X coins) 👑`. If the marker is missing (e.g. after a manual topic change), it self-heals on the next data save.
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

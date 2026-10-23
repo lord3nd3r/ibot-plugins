@@ -1,10 +1,12 @@
 # Trivia Game Framework
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`.
+
 IRC-style trivia game with categories, progressive hints, and inactivity detection.
 
 ## Features
 
-- **465 questions** across 18+ categories (Geography, Science, History, Movies, Sports, Tech, etc.)
+- **431 questions** across 18 categories (Geography, Science, History, Movies, Sports, Tech, etc.)
 - **Category filtering & listing** (`$trivia [category] [number]`, `$trivia categories`)
 - **Anti-repeat rotation** - answers from recent games are deprioritized so consecutive games draw fresh questions
 - **Progressive masked hints** (letters gradually unmasked, numeric range/decade hints, single-letter markers)
@@ -14,7 +16,7 @@ IRC-style trivia game with categories, progressive hints, and inactivity detecti
 - **Inactivity detection** - warns after 3 unanswered, stops after 5
 - **IRC-bot-style output** matching traditional trivia bot format
 
-## Sopel Bot Commands
+## IRC Commands
 
 ### In IRC Channel
 ```
@@ -73,21 +75,23 @@ python3 _cli_trivia.py --category Geography -i --num 15
 
 ## Installation
 
-The trivia bot is already installed in your Sopel scripts directory. Sopel should auto-load it when the bot starts.
+`trivia.py`, `trivia_game.py`, `trivia_db.py` and `questions.json` must be in the same folder: the plugin folder your ibot `[core] extra` points to (for example `~/.sopel/scripts`). ibot loads `trivia` automatically at startup. For the full walkthrough, see [SETUP_GUIDE.md](SETUP_GUIDE.md).
 
-If you need to reload:
+To pick up changes to `trivia.py` without restarting (owner only):
 ```
-/msg YourBot reload trivia
+$reload trivia
 ```
+`$reload` re-imports only `trivia.py`. If you change `trivia_game.py` or `trivia_db.py`, restart the bot.
+
+*On Sopel:* put the same files in `~/.sopel/scripts/` and use Sopel's `.reload trivia` or restart Sopel.
 
 ## Files
 
-- **`trivia.py`** — Sopel IRC bot plugin (main module)
+- **`trivia.py`** — ibot plugin (main module; Sopel-compatible)
 - **`trivia_game.py`** — Core game engine with hint generation
 - **`trivia_db.py`** — SQLite database layer for stats, leaderboards, and game history
-- **`questions.json`** — 465 categorized questions
+- **`questions.json`** — 431 categorized questions
 - **`_cli_trivia.py`** — Standalone CLI runner for testing
-- **`tests/test_trivia_game.py`** — Unit tests
 - **`_demo_trivia.py`** — Demo script showing features
 
 ## Question Format

@@ -1,17 +1,19 @@
 # 🛠️ Bot Admin (botadmin)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Small owner/admin helper plugin. It provides **`$restart`**, **`$breload`** and **`$bothelp`**. Every other bot-management command (`$rehash`, `$reload`, `$load`, `$unload`, `$plugins`, `$raw`, `$say`, `$act`, `$bjoin`, `$bpart`, `$bnick`, `$bmode`, `$bquit`, `$bstatus`, `$enable`, `$disable`, `$disabled`) comes from the **ibot core admin plugin** (`ibot/plugins/admin.py`), not from this script. See the ibot docs for those.
 
 ---
 
 ## Setup
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/botadmin.py
 ```
 
-**2. Owner / admins** come from the bot's `.cfg`:
+**2. Owner / admins** come from `[core]` in your ibot `.cfg`:
 ```ini
 [core]
 owner = YourNick
@@ -59,3 +61,7 @@ admins =
 /msg Glitchy $breload all
 /msg Glitchy $bothelp
 ```
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

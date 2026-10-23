@@ -1,17 +1,19 @@
 # 🔑 PromoteMe (opme)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Promote yourself (or a target) to channel operator. Supports configurable modes, temporary promotions, channel restrictions, and cooldowns.
 
 ---
 
 ## Setup
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/opme.py
 ```
 
-**2. Add to your Sopel `.cfg` file (optional — all have defaults):**
+**2. Add to your ibot `.cfg` file (optional — all have defaults):**
 ```ini
 [promoteme]
 # Only allow admins to use the command (default: true)
@@ -151,3 +153,7 @@ For example, with `modes = +o` and `promotion_duration = 300`:
   (5 minutes later...)
 * Glitchy sets mode -o Admin
 ```
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

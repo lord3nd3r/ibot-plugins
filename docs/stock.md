@@ -1,5 +1,7 @@
 # 📈 Stocks (stock)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Look up stocks by ticker symbol or company name. Shows current price with multi-period trend indicators.
 
 ---
@@ -11,7 +13,7 @@ Look up stocks by ticker symbol or company name. Shows current price with multi-
 pip install yfinance
 ```
 
-**2. Place the script:**
+**2. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/stock.py
 ```
@@ -86,3 +88,7 @@ The currency symbol adapts to the stock's market (e.g. `$` for USD, `€` for EU
 <User> $stock XYZNOTREAL
 <Glitchy> ❌ Could not find stock data for "XYZNOTREAL".
 ```
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

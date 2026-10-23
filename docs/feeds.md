@@ -1,5 +1,7 @@
 # 📰 RSS/Atom Feeds (feeds)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Posts new items from RSS and Atom feeds into IRC channels. **Off everywhere by default** — a channel only gets posts after a channel op (or bot admin) runs `$feed on` there **and** subscribes it to at least one feed.
 
 Feeds are a **global list** managed by bot admins (and feed admins). Channel ops choose which of those feeds their channel receives.
@@ -10,7 +12,7 @@ Feeds are a **global list** managed by bot admins (and feed admins). Channel ops
 
 **No config section needed.** Feed lists, subscriptions, feed admins, and seen-item state are stored in the bot's built-in `bot.db` (tables `feed_list`, `feed_channels`, `feed_subs`, `feed_admins`, `feed_seen`, `feed_recent`), created automatically on load.
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/feeds.py
 ```
@@ -130,3 +132,7 @@ Feeds are a **global list** managed by bot admins (and feed admins). Channel ops
 /msg Glitchy $feed #oss-feeds on
 /msg Glitchy $feed #oss-feeds admin add SomeNick
 ```
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

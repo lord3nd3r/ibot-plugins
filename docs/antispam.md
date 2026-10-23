@@ -1,12 +1,14 @@
 # 🛡️ Anti-Spam Protection (antispam)
 
-Anti-Spam Kick Protection for Sopel. It detects and kicks users who post rapid-fire messages, unicode art walls, or repetitive copypasta spam. Host bans are **off by default**. When a channel op turns them on, each kick also sets `+b *!*@host`. The plugin integrates with the **autovoice** plugin to revoke voice privileges from kicked spammers.
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
+Anti-spam kick protection for ibot. It detects and kicks users who post rapid-fire messages, unicode art walls, or repetitive copypasta spam. Host bans are **off by default**. When a channel op turns them on, each kick also sets `+b *!*@host`. The plugin integrates with the **autovoice** plugin to revoke voice privileges from kicked spammers.
 
 ---
 
 ## Setup
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/antispam.py
 ```
@@ -101,3 +103,6 @@ $spam cmdexempt add !duck
 ```
 Messages starting with an exempt prefix are completely skipped by all spam detection modes — they won't count toward rate limits, won't trigger content matches, and won't be fingerprinted as copypasta.
 
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

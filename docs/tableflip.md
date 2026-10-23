@@ -1,5 +1,7 @@
 # (╯°□°）╯︵ ┻━┻ Table Flip (tableflip)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Play a 4-step table flip animation with timed delays between each frame.
 
 ---
@@ -8,7 +10,7 @@ Play a 4-step table flip animation with timed delays between each frame.
 
 **No config needed.** Just drop the script in place and it works.
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/tableflip.py
 ```
@@ -62,3 +64,7 @@ Frame 4:  (╯°□°）╯︵ ┻━┻
 -Glitchy- (｡•́︿•̀｡) Whoa! Please wait 45s before flipping again! ⏳✨
 ```
 > Cooldown notices are sent as a private NOTICE, not to the channel.
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

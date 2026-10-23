@@ -1,5 +1,7 @@
 # 🌲 Hunting Game (hunt)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Wildlife hunting mini-game modeled after the authentic IRCHunt v5.5.0 mechanics. Features wildlife encounters, multiple rarity tiers, weapon leveling, ammo and reload management, hunting permits, loot drops, steady aim, and protected-animal rescues.
 
 ---
@@ -20,6 +22,17 @@ When enabled, the bot announces that hunting is active in the channel and direct
 
 **3. Database:**
 No configuration needed. The database (`hunt.db`) is automatically created in the scripts directory on first use.
+
+**4. Optional `[hunt]` section in your ibot `.cfg`:**
+```ini
+[hunt]
+# Channels where hunting is on without running $hunttoggle (comma-separated)
+channels = #yourchannel, #hunting
+# Seconds between animal spawns: random value between these (defaults: 360 and 720)
+spawn_min = 360
+spawn_max = 720
+```
+A `$hunttoggle off` in a channel still overrides the `channels` list. Run `$rehash` after you edit the file.
 
 ---
 
@@ -138,3 +151,7 @@ Ammo depletion warnings (`[AMMO]`), empty chamber alerts (`[RELOAD]`), and permi
 <User> $huntrate slow
 <User> $huntrate 10 20
 ```
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

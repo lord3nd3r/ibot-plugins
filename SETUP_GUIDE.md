@@ -1,31 +1,86 @@
-# Trivia Bot - Quick Setup Guide
+# 🧩 Setup Guide
 
-## ✅ Installation Complete!
+**Designed for [ibot](https://github.com/lord3nd3r/ibot). Should also work with Sopel.**
 
-All files are in place in your Sopel scripts directory:
+This guide takes you from nothing to an ibot running this plugin collection, and uses the trivia game as the first thing to test. If you're on Sopel, the main steps still apply in spirit, and [Appendix: Sopel](#appendix-sopel) at the end lists the differences.
+
+---
+
+## 1. Install ibot
+
+ibot needs Python 3.8 or newer (production runs 3.13).
+
+```bash
+git clone https://github.com/lord3nd3r/ibot.git ~/ibot
+cd ~/ibot
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e .
+```
+
+For more detail (optional MySQL/PostgreSQL drivers, upgrading), see [ibot: Installation](https://github.com/lord3nd3r/ibot/blob/main/docs/getting-started/installation.md).
+
+## 2. Get the plugins
+
+```bash
+git clone https://github.com/lord3nd3r/sopel-scripts.git ~/.sopel/scripts
+pip install requests beautifulsoup4 defusedxml yfinance   # in the same venv as ibot
+```
+
+The checkout looks like this (trivia files shown):
+
 ```
 ~/.sopel/scripts/
-  ├── trivia.py           (Sopel bot plugin)
-  ├── trivia_game.py      (Game engine)
-  ├── questions.json      (187 questions)
-  ├── _cli_trivia.py       (CLI testing tool)
-  ├── _demo_trivia.py      (Demo script)
-  └── tests/
-      └── test_trivia_game.py
+  ├── trivia.py           (plugin: IRC commands)
+  ├── trivia_game.py      (game engine)
+  ├── trivia_db.py        (SQLite stats layer)
+  ├── questions.json      (431 questions in 18 categories)
+  ├── _cli_trivia.py      (CLI tester, not a plugin)
+  ├── _demo_trivia.py     (demo script, not a plugin)
+  └── … every other plugin
 ```
 
-## 🚀 Starting the Bot
+ibot skips files that start with `_`, so the CLI and demo scripts never load as plugins.
 
-### 1. Restart or Reload Sopel
+## 3. Configure ibot
+
 ```bash
-# If Sopel is running, reload the module:
-/msg YourBotName reload trivia
-
-# Or restart Sopel completely:
-sopel restart
+cd ~/ibot
+python3 -m ibot --generate-config mybot.cfg
+chmod 600 mybot.cfg
 ```
 
-### 2. Test in IRC Channel
+Set at least these keys (all values are placeholders):
+
+```ini
+[core]
+nick = MyBot
+host = irc.example.net
+port = 6697
+use_ssl = true
+owner = YourNick
+channels = #yourchannel
+prefix = \$
+db_filename = mybot.db
+extra = ~/.sopel/scripts
+```
+
+- `prefix` is a regular expression. ibot's default is `\.` (`.trivia`), and these docs use `\$` (`$trivia`).
+- `extra` is a comma-separated list of plugin directories. Changing it requires a restart.
+- Plugin settings go in their own sections in this same file. See [Configuring plugins](README.md#-configuring-plugins).
+
+For every option, see [ibot: Core reference](https://github.com/lord3nd3r/ibot/blob/main/docs/configuration/core-reference.md); for SASL/NickServ and owner accounts, see [ibot: Authentication](https://github.com/lord3nd3r/ibot/blob/main/docs/configuration/authentication.md).
+
+## 4. Start the bot
+
+```bash
+cd ~/ibot
+python3 -m ibot mybot.cfg -v
+```
+
+Check the log for `Plugin directories: [..., '/home/you/.sopel/scripts']` and a `Loaded plugin: trivia` line. To run it permanently, see [ibot: Running as a service](https://github.com/lord3nd3r/ibot/blob/main/docs/getting-started/running-as-a-service.md).
+
+## 5. Test in IRC
+
 ```irc
 <YourNick> $trivia 5
 <Bot> Starting trivia! 5 questions loaded. Answer in the channel!
@@ -35,84 +90,62 @@ sopel restart
 <Bot> Winner: YourNick; Answer: Paris; Time: 3.456s; Streak: 1; Points: 3; Total: 3
 ```
 
-## 📋 Available Commands
+### Reloading after changes
+
+| You changed… | Do this (owner) |
+|---|---|
+| One plugin file | `$reload trivia` |
+| Added a new plugin file | `$load <name>` |
+| The `.cfg` file, or several plugins | `$rehash` |
+| `extra`, database or flood settings | Restart the bot |
+
+None of these except the restart disconnect the bot. A reload that fails keeps the old version running. See [ibot: Plugin management](https://github.com/lord3nd3r/ibot/blob/main/docs/administration/plugin-management.md).
+
+> **Note:** `$reload trivia` re-imports only `trivia.py`. If you change `trivia_game.py` or `trivia_db.py`, restart the bot.
+
+---
+
+## 📋 Trivia commands
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `$trivia` | Start with 100 questions (default) | `$trivia` |
-| `$trivia 10` | Start with 10 questions | `$trivia 10` |
-| `$trivia 500` | Max 500 questions | `$trivia 500` |
-| `$strivia` | Stop current game | `$strivia` |
-| `$tstats` | Show your own stats | `$tstats` |
-| `$tstats Nick` | Show another player's stats | `$tstats CrystalMath` |
-| `$ttop` | Show top 10 in current channel | `$ttop` |
-| `$ttopserver` | Show top 10 across entire server | `$ttopserver` |
+| `$trivia [category] [number]` | Start a game (default 100 questions, max 500) | `$trivia 10` |
+| `$trivia categories` / `$tcategories` | List the question categories | `$tcats` |
+| `$strivia` | Stop the current game | `$strivia` |
+| `$tstats [nick]` | Show your stats or another player's | `$tstats CrystalMath` |
+| `$ttop` | Top 10 in the current channel | `$ttop` |
+| `$ttopserver` | Top 10 across the whole server | `$ttopserver` |
 
-## 🎮 Game Features
+## 🎮 Game features
 
-- **Multiple channels**: Each channel can have its own game running
-- **Progressive hints**: 3 hints revealed every 10 seconds
-- **Smart scoring**: Fast answers get more points (3/2/1)
-- **Streak tracking**: Consecutive correct answers build streaks
-- **Auto-stop**: Game warns at 3 unanswered, stops at 5
-- **Persistent statistics**: All stats saved to SQLite database
+- **Multiple channels:** each channel can run its own game.
+- **Progressive hints:** 3 hints, one every 10 seconds.
+- **Scoring:** faster answers earn more points (3/2/1).
+- **Streaks:** consecutive correct answers build a streak.
+- **Auto-stop:** the game warns after 3 unanswered questions and stops after 5.
+- **Persistent statistics:** everything is saved to SQLite.
 
-## 📊 Database & Statistics
+## 📊 Statistics
 
-All trivia statistics are automatically saved to `trivia_stats.db` and persist across bot restarts!
+Stats are saved to `trivia_stats.db` **next to `trivia.py`** (for example `~/.sopel/scripts/trivia_stats.db`) and survive restarts. Per-player, per-channel, server-wide and per-game history are all tracked.
 
-**What's Tracked:**
-- **Per-player**: Total points, wins, answers, longest streak, fastest time
-- **Per-channel**: Individual channel leaderboards
-- **Per-server**: Server-wide rankings across all channels
-- **Per-game**: Complete game history with all answers
-
-**View Stats:**
 ```irc
 <You> $tstats
 <Bot> YourNick: 150 points | 50 wins | 5 streak | Fastest: 2.34s
-
-<You> $ttop
-<Bot> 🏆 Top Players in #channel:
-<Bot> 1. Player1: 500 pts | 180 wins | 8 streak | ⚡1.23s
-<Bot> 2. Player2: 450 pts | 150 wins | 6 streak | ⚡2.10s
 ```
 
-**Database Location:** `~/.sopel/scripts/trivia_stats.db`
+## 🧪 Testing outside IRC
 
-## 🧪 Testing Before IRC
-
-Test the game engine locally:
 ```bash
-# Quick test
-python3 tests/test_trivia_game.py
-
-# Interactive CLI demo
-python3 _cli_trivia.py -i --num 5 --shuffle
-
-# See statistics
-python3 _demo_trivia.py
+cd ~/.sopel/scripts
+python3 _cli_trivia.py -i --num 5 --shuffle   # interactive CLI game
+python3 _demo_trivia.py                       # hint/category demo
 ```
 
-## 🔧 Customization
+## ➕ Adding questions
 
-### Change Hint Timing
-Edit `trivia.py`, line ~85:
-```python
-time.sleep(10)  # Change to 5 for faster hints
-```
+Add entries to `questions.json`:
 
-### Adjust Point System
-Edit `trivia.py`, lines ~118-122:
-```python
-if elapsed < 5:
-    points = 3  # Fast answer
-elif elapsed < 10:
-    points = 2  # Medium
-```
-
-### Add More Questions
-Edit `questions.json` following this format:
 ```json
 {
   "category": "Your Category",
@@ -121,43 +154,38 @@ Edit `questions.json` following this format:
 }
 ```
 
-## 📊 Question Database
-
-- **187 questions** across 18 categories
-- Categories: Geography, Science, History, Movies, Sports, Music, Food, Animals, Literature, Technology, Math, Art, Culture, Languages, Tools, Word Play, TV Film and Stage, Sport and Leisure
+Keep answers short and lowercase. Then start a new game; the file is read when each game starts. For multiple-choice entries and the details of hints and scoring, see [trivia_README.md](trivia_README.md) and [docs/trivia.md](docs/trivia.md).
 
 ## 🐛 Troubleshooting
 
-**Bot doesn't respond to $trivia:**
-- Check that trivia.py is in the scripts directory
-- Verify command prefix is `$` (check bot config)
-- Try: `/msg BotName reload trivia`
+**The bot doesn't respond to `$trivia`:**
+- Run `$plugins` and check that `trivia` is in the list. If it isn't, look in the startup log for `Failed to load plugin 'trivia'`.
+- Check that `[core] extra` points at the folder that contains `trivia.py`, and restart if you changed it.
+- Check your prefix: with `prefix = \.` the command is `.trivia`.
+- After fixing the problem, run `$reload trivia` (or `$load trivia`).
 
-**"questions.json not found" error:**
-- Ensure questions.json is in same directory as trivia.py
-- Check file permissions: `ls -la questions.json`
+**"questions.json not found":**
+- `questions.json` must be in the same directory as `trivia.py`.
+- Check permissions with `ls -la questions.json`.
 
-**Game doesn't stop after inactivity:**
-- This is normal - timing may vary based on server load
-- Manually stop with `$strivia`
+**The game doesn't stop after inactivity:**
+- Timing can vary with server load. Stop it by hand with `$strivia`.
 
-## 📝 Contributing Questions
-
-Want to add questions? Keep this format:
-```json
-{
-  "category": "Category Name",
-  "question": "Clear question text?",
-  "answer": "exact answer text"
-}
-```
-
-Tips:
-- Use lowercase for answers (bot auto-converts)
-- Keep answers concise
-- Test with progressive hint generation
-- Group similar topics in same category
+For more help, see [ibot: Troubleshooting](https://github.com/lord3nd3r/ibot/blob/main/docs/troubleshooting.md).
 
 ---
 
-**Ready to play!** Type `$trivia` in any channel where the bot is present.
+## Appendix: Sopel
+
+The plugins use the standard Sopel plugin API, so they should also work on [Sopel](https://sopel.chat/), but ibot is the supported platform.
+
+1. `pip install sopel requests beautifulsoup4 defusedxml yfinance`
+2. Put the plugin files (and `questions.json`) in `~/.sopel/scripts/`, Sopel's default plugin folder.
+3. Add any plugin sections to Sopel's config (`~/.sopel/default.cfg` by default).
+4. Restart Sopel, or use Sopel's own `.reload trivia`.
+
+The ibot-only admin commands (`$rehash`, `$bjoin`, `$bstatus` and so on) aren't available on Sopel. See [Using with Sopel](README.md#-using-with-sopel).
+
+---
+
+**Ready to play!** Type `$trivia` in any channel the bot is in.

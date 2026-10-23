@@ -1,17 +1,19 @@
 # 📊 Channel Stats (monitor)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Tracks lines, words, actions, kicks, bans, joins, parts, quits, splits, and nick changes per user per channel.
 
 ---
 
 ## Setup
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/monitor.py
 ```
 
-**No config section needed.** The stats database (`chanstats.db`) is created automatically in Sopel's `db_dir` (usually `~/.sopel/`). Tracking begins immediately once the script is loaded.
+**No config section needed.** The stats database (`chanstats.db`) is created automatically in the bot's `db_dir`: under ibot that's `[core] db_dir` if set, otherwise the directory your `.cfg` file is in (under Sopel it's usually `~/.sopel/`). Tracking begins immediately once the script is loaded.
 
 ---
 
@@ -100,3 +102,7 @@ Tracks lines, words, actions, kicks, bans, joins, parts, quits, splits, and nick
 ```
 <@Admin> $zapnick SpamBot
 ```
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

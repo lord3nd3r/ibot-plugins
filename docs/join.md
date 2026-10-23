@@ -1,25 +1,27 @@
 # 🚪 Join (join)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Make the bot join a channel. **Owner only** — this is restricted to the single configured bot owner, not admins.
 
 ---
 
 ## Setup
 
-**No config needed** beyond Sopel's built-in `owner` setting.
+**No config needed** beyond the `[core] owner` setting in your ibot `.cfg`.
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/join.py
 ```
 
-**2. Make sure your `.cfg` has an owner defined:**
+**2. Make sure your ibot `.cfg` has an owner defined:**
 ```ini
 [core]
 owner = YourNick
 ```
 
-> Only the configured `owner` can use this command. Admins and channel ops **cannot** use it — it is strictly owner-only via Sopel's `@module.require_owner()` decorator.
+> Only the configured `owner` can use this command. Admins and channel ops **cannot** use it — it is strictly owner-only via the `@module.require_owner()` decorator.
 
 ---
 
@@ -67,3 +69,7 @@ owner = YourNick
 ```
 
 > **Tip:** For admin-level join/part, use the ibot core `$bjoin` / `$bpart` commands (listed in [Bot Admin](botadmin.md)), which allow configured admins.
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

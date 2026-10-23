@@ -1,12 +1,14 @@
 # 🔧 Typo Correction (fix)
 
-Full-featured IRC sed correction plugin for Sopel. It allows users to fix typos in their own last messages or suggest corrections for others using standard `s/pattern/replacement/` syntax.
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
+Full-featured IRC sed correction plugin for ibot. It allows users to fix typos in their own last messages or suggest corrections for others using standard `s/pattern/replacement/` syntax.
 
 ---
 
 ## Setup
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/fix.py
 ```
@@ -81,3 +83,7 @@ Using capture groups and backreferences:
 * **ReDoS protection**: Plain-text patterns (no regex special characters) are matched directly. Real regex patterns are run in a short-lived separate Python process that is killed after **2 seconds**, so a pathological pattern like `s/(a+)+$/x/` can't freeze the bot. At most 2 regex corrections run at once; if one times out or the bot is busy, nothing is said.
 * **Search depth**: A correction searches at most the last 200 remembered messages.
 * **Output Truncation**: Corrected messages are capped at 420 characters to comply with IRC protocol limits.
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

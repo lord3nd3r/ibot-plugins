@@ -1,5 +1,7 @@
 # 🌤️ Weather (weather)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Powered by PirateWeather API. Register your location for quick lookups.
 
 ---
@@ -11,7 +13,7 @@ Powered by PirateWeather API. Register your location for quick lookups.
 pip install requests
 ```
 
-**2. Place the script:**
+**2. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/weather.py
 ```
@@ -107,3 +109,7 @@ WEATHER_API_KEY = "your-api-key-here"
 <User> $unregister_location
 <Glitchy> ✅ Your saved location has been removed.
 ```
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

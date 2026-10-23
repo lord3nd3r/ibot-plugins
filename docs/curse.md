@@ -1,5 +1,7 @@
 # 🚔 Verbal Morality (curse)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Demolition Man-style Verbal Morality Statute. **Disabled by default.** When enabled, the bot monitors every message in the channel and issues fines for profanity with a randomized §X.X citation from the Verbal Morality Statute.
 
 ---
@@ -8,12 +10,12 @@ Demolition Man-style Verbal Morality Statute. **Disabled by default.** When enab
 
 **No config needed.** Just drop the script in place. Fining is **off by default** per channel — use `$curse on` to enable it.
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/curse.py
 ```
 
-**Data storage:** Channel toggle states are stored in Sopel's built-in `bot.db` and persist across restarts.
+**Data storage:** Channel toggle states are stored in the bot's built-in `bot.db` and persist across restarts.
 
 ---
 
@@ -56,7 +58,7 @@ Demolition Man-style Verbal Morality Statute. **Disabled by default.** When enab
 ## Permissions
 
 Toggling requires **any** of the following:
-- Bot owner or admin (configured in `.cfg`)
+- Bot owner or admin (configured in `[core]` of your ibot `.cfg`)
 - Channel op (`+o` / `@`)
 - Channel halfop (`+h` / `%`)
 - Channel admin (`+a` / `&`)
@@ -107,3 +109,7 @@ Toggling requires **any** of the following:
 <%Admin> $curse off
 <Glitchy> 🚔 Verbal Morality Statute has been DEACTIVATED in #channel.
 ```
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

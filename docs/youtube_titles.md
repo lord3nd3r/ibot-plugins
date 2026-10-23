@@ -1,6 +1,8 @@
 # 🎬 YouTube Titles (youtube_titles)
 
-Automatic YouTube video metadata fetching for Sopel. When a user posts a YouTube URL in chat, the bot automatically fetches and displays the video title and channel/author name. It includes a command to enable/disable this feature per channel.
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
+Automatic YouTube video metadata fetching for ibot. When a user posts a YouTube URL in chat, the bot automatically fetches and displays the video title and channel/author name. It includes a command to enable/disable this feature per channel.
 
 ---
 
@@ -8,7 +10,7 @@ Automatic YouTube video metadata fetching for Sopel. When a user posts a YouTube
 
 **No config needed.** Just drop the script in place and it works.
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/youtube_titles.py
 ```
@@ -57,3 +59,7 @@ YouTube: Video Title
 > **Fail-silent:** If the oEmbed API call fails or the video is private/deleted, the bot simply doesn't respond — no error message is shown.
 >
 > **Cooldowns:** at most one YouTube title per channel every **5 seconds** and one per user every **15 seconds**; links during a cooldown are skipped silently. Titles and channel names are stripped of IRC control/formatting characters.
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

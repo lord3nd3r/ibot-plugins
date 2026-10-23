@@ -1,5 +1,7 @@
 # 🤦 Facepalm & Shrug (facepalm)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Auto-triggers: when someone does `/me facepalms`, the bot replies with a random facepalm reaction. When someone does `/me shrugs`, the bot replies with ¯\\\_(ツ)\_/¯. Also includes the `$shrug` command.
 
 ---
@@ -8,7 +10,7 @@ Auto-triggers: when someone does `/me facepalms`, the bot replies with a random 
 
 **No config needed.** Just drop the script in place and it works.
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/facepalm.py
 ```
@@ -103,3 +105,7 @@ The `/me shrugs` trigger always replies with a simple `¯\_(ツ)_/¯` — no ran
 <User> $shrug burnout
 <Glitchy> burnout: ¯\_(ツ)_/¯
 ```
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

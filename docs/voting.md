@@ -1,17 +1,19 @@
 # 🗳️ Voting (voting)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Create timed polls with multiple options. Requires halfop (`%`) or above to create.
 
 ---
 
 ## Setup
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/voting.py
 ```
 
-**2. Add to your Sopel `.cfg` file (optional — all have defaults):**
+**2. Add to your ibot `.cfg` file (optional — all have defaults):**
 ```ini
 [voting]
 # Path to the SQLite database for storing votes (default: voting.db)
@@ -109,3 +111,7 @@ message_delay = 0.5
 <Glitchy> 🏆 WINNER: 3️⃣ Option 3 - Rust
 <Glitchy> 🏁 ═══════════════════════════════════════
 ```
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

@@ -1,5 +1,7 @@
 # 🔗 Markov Chain (markov)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Markov chain chatbot plugin — learns from channel messages and generates random sentences by chaining word triplets (trigrams) with weighted probabilities.
 
 Originally by **ComputerTech**, updated by **End3r**.
@@ -38,12 +40,12 @@ Each time the same trigram appears, its frequency increases — making common ph
 
 ## Setup
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/markov.py
 ```
 
-**2. No config file changes needed.** Trigram data is stored in its own SQLite database at `~/.sopel/markov.db` (created automatically on first load). Channel settings (enabled, chance) use Sopel's built-in `bot.db`.
+**2. No config file changes needed.** Trigram data is stored in its own SQLite database at `~/.sopel/markov.db` (created automatically on first load). Channel settings (enabled, chance) use the bot's built-in `bot.db`.
 
 **3. Load the plugin** (bot owner):
 ```
@@ -151,7 +153,7 @@ When `markov-chance` is set to a value greater than 0, the bot has that percenta
 
 ## Data Storage
 
-All trigram data is stored in a separate SQLite database at `~/.sopel/markov.db`, keeping it isolated from Sopel's main database. The file is created automatically on first load. WAL journal mode is used for better concurrent read/write performance.
+All trigram data is stored in a separate SQLite database at `~/.sopel/markov.db`, keeping it isolated from the bot's main database. The file is created automatically on first load. WAL journal mode is used for better concurrent read/write performance.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -165,7 +167,7 @@ The primary key is `(channel, first_word, second_word, third_word)` — so each 
 
 ### Optional size cap (off by default)
 
-The database grows forever unless you set a cap in the bot config:
+The database grows forever unless you set a cap in your ibot `.cfg`:
 
 ```ini
 [markov]
@@ -183,3 +185,7 @@ When this is above 0, an hourly job deletes the lowest-frequency trigrams from a
 - **Keep auto-trigger low** (2-5%) to avoid flooding. Higher values make the bot chatty.
 - **Each channel has its own brain.** Enabling markov in `#chat` doesn't affect `#help`.
 - **Output is capped at 440 characters** to stay within IRC message limits.
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

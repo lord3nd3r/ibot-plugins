@@ -1,6 +1,8 @@
 # 💬 quote — Channel Quote Database
 
-A comprehensive quote management system for Sopel. Save and search funny or memorable things said in the channel.
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
+A comprehensive quote management system for ibot. Save and search funny or memorable things said in the channel.
 
 ### Features
 - Per-channel quote databases.
@@ -26,3 +28,7 @@ The bot command prefix is **`$`**.
 | `$quote del <id>` | Delete a quote (Admins only) | `$quote del 42` |
 
 ---
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

@@ -1,5 +1,7 @@
 # 🧩 Trivia (trivia)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Multi-player trivia with categories, progressive hints, streaks, and stats.
 
 ---
@@ -34,7 +36,7 @@ Multi-player trivia with categories, progressive hints, streaks, and stats.
 
 ## Features
 
-- **465 questions** across 18+ categories (Geography, Science, History, Movies, Sports, etc.)
+- **431 questions** across 18 categories (Geography, Science, History, Movies, Sports, etc.)
 - **Anti-repeat rotation**: Questions answered in the channel's last 3 finished games are automatically deprioritized to the back of the deck on game start so consecutive games stay fresh.
 - **Progressive hints**:
   - Text answers reveal letters progressively at 10-second intervals.
@@ -91,3 +93,7 @@ Multi-player trivia with categories, progressive hints, streaks, and stats.
 <User> $ttopserver
 <Glitchy> 🧩 Server Top 10: 1. Brainiac (580) 2. Scholar (412) 3. User (142) ...
 ```
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

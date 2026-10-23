@@ -1,12 +1,14 @@
 # 🔗 URL Title Fetcher (url_titles)
 
-Automatic URL title fetching plugin for Sopel/ibot. When a user posts a URL in chat, the bot automatically fetches the webpage, parses the HTML, and displays its `<title>` tag. Channel ops and bot admins can enable or disable title fetching per channel.
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
+Automatic URL title fetching plugin for ibot. When a user posts a URL in chat, the bot automatically fetches the webpage, parses the HTML, and displays its `<title>` tag. Channel ops and bot admins can enable or disable title fetching per channel.
 
 ---
 
 ## Setup
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/url_titles.py
 ```
@@ -51,3 +53,7 @@ Automatic URL title fetching plugin for Sopel/ibot. When a user posts a URL in c
 * **Safety**: Only public `http`/`https` addresses are fetched. Links to private, loopback, link-local or other internal IPs (including hostnames that resolve to them) are ignored. Up to 5 redirects are followed, and each hop is checked the same way; the IP is checked again at connect time.
   * **Length Limit**: Title strings are truncated to **200 characters** with an ellipsis (`…`).
   * **Content Type**: Only parses pages with a `Content-Type` header containing `text/html`.
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

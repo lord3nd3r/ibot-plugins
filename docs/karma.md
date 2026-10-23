@@ -1,5 +1,7 @@
 # ⭐ Karma (karma)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Inline `++` / `--` karma system with per-channel and global tracking.
 
 ---
@@ -10,14 +12,14 @@ Inline `++` / `--` karma system with per-channel and global tracking.
 ```bash
 pip install sqlalchemy
 ```
-(Usually already installed with Sopel.)
+(Already installed as an ibot dependency.)
 
-**2. Place the script:**
+**2. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/karma.py
 ```
 
-**No config section needed.** Karma data is stored in Sopel's built-in `bot.db` via SQLAlchemy — no extra database setup required.
+**No config section needed.** Karma data is stored in the bot's built-in `bot.db` via SQLAlchemy — no extra database setup required.
 
 ---
 
@@ -133,3 +135,6 @@ Requires **halfop** (`+h`) or above, or **bot owner**.
 
 > **Note:** Even if the bot doesn't have channel operator status, karma changes are still blocked and rolled back — the bot just can't ban/kick without ops.
 
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

@@ -1,8 +1,12 @@
 # 📋 Bot Command Reference
 
-Click any script below to see its full command list with examples.
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** To load these plugins, see the [Quick start](README.md#-quick-start-with-ibot).
 
-The bot command prefix is **`$`** unless noted otherwise.
+Click any plugin below to see its full command list with examples.
+
+The examples use the **`$`** prefix (what the `glitchy` bot uses, `prefix = \$` in its ibot `.cfg`). ibot's default prefix is `.`, so use whatever yours is set to.
+
+**Core commands:** bot management commands such as `$rehash`, `$reload <plugin>`, `$load`, `$unload`, `$plugins`, `$bjoin`, `$bpart`, `$say`, `$bstatus` and `$disable`/`$enable` are built into ibot. See [ibot admin commands](https://github.com/lord3nd3r/ibot/blob/main/docs/administration/admin-commands.md).
 
 ---
 
@@ -44,3 +48,7 @@ The bot command prefix is **`$`** unless noted otherwise.
 | [🌲 Hunting Game](docs/hunt.md) | Wildlife hunting game with guns, permits, ammo, and steady aim mechanics |
 | [ᓚᘏᗢ Cat](docs/cat.md) | Print a random unicode cat (`$cat`) |
 | [📋 Help Link](docs/commands.md) | `$help` / `$commands` / `$cmds` link to this page |
+
+---
+
+*On Sopel, the core commands above aren't available; use Sopel's own admin commands instead. See [Using with Sopel](README.md#-using-with-sopel).*

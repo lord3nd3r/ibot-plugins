@@ -1,6 +1,8 @@
 # 🌿 Weed & Trippy Sessions (weed)
 
-A lighthearted party/sesh module for Sopel with countdown animations (solo mode) and gift actions (with a target user). It supports 15 substance categories, inline triggers, and rotation passing.
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
+A lighthearted party/sesh plugin for ibot with countdown animations (solo mode) and gift actions (with a target user). It supports 15 substance categories, inline triggers, and rotation passing.
 
 ---
 
@@ -8,7 +10,7 @@ A lighthearted party/sesh module for Sopel with countdown animations (solo mode)
 
 **No config needed.** Just drop the script in place and it works.
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/weed.py
 ```
@@ -117,3 +119,7 @@ Countdown commands can be triggered **mid-sentence**:
 | Vape | 10 | live resin cart, disposable pen, volcano bag |
 | Hash | 10 | Nepalese temple ball, Moroccan blonde, Afghani black chunk |
 | Munchies | 12 | pepperoni pizza, nacho cheese chips, cold leftovers, ice cream |
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

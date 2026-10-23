@@ -1,5 +1,7 @@
 # 🧠 AI Chatbot (ai-multi)
 
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
 Talks to you when mentioned by name. Supports xAI Grok, local Ollama, and OpenAI-compatible APIs, with optional Grok web search. **v6.0** — memory-safe, proper lifecycle, thread-safe caches.
 
 ---
@@ -501,7 +503,7 @@ Long-lived structures like `grok_history`, `grok_locks`, and `grok_channel_log` 
 
 ```
 ┌─────────────────┐
-│ Sopel handler    │──► API_TASK_QUEUE (maxsize=50)
+│ Plugin handler   │──► API_TASK_QUEUE (maxsize=50)
 │ threads (N)      │         │
 └─────────────────┘         ▼
                      ┌──────────────┐
@@ -615,3 +617,7 @@ Long-lived structures like `grok_history`, `grok_locks`, and `grok_channel_log` 
 ```
 /msg Glitchy $ignore SpamBot
 ```
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*

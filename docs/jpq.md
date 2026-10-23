@@ -1,26 +1,34 @@
 # 🛡️ JPQ Flood Protection (jpq)
 
-Join/Part/Quit Cycle Flood Protection for Sopel. It detects and bans users who cycle joins, parts, or quits in channels to flood the chat or server logs.
+> **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
+
+Join/Part/Quit cycle flood protection for ibot. It detects and bans users who cycle joins, parts, or quits in channels to flood the chat or server logs.
 
 ---
 
 ## Setup
 
-**1. Place the script:**
+**1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
 ~/.sopel/scripts/jpq.py
 ```
 
-**2. Configure `sopel.cfg` (Optional):**
+**2. Configure your ibot `.cfg` (optional):**
 Default settings can be defined in the `[jpq]` section:
 ```ini
 [jpq]
-window = 30             # Time window in seconds to track cycling events (default: 30)
-threshold = 5           # Number of events within the window to trigger ban (default: 5)
-ban_duration = 300      # Auto-unban delay in seconds; 0 = permanent (default: 300)
-banmask_style = host    # 'host' (*!*@host) or 'ident' (*!user@host) (default: host)
-exempt_modes = vho      # Only "v" is read. +h and above are always exempt
-enabled = true          # Global enable/disable switch (default: true)
+# Time window in seconds to track cycling events (default: 30)
+window = 30
+# Number of events within the window to trigger ban (default: 5)
+threshold = 5
+# Auto-unban delay in seconds; 0 = permanent (default: 300)
+ban_duration = 300
+# 'host' (*!*@host) or 'ident' (*!user@host) (default: host)
+banmask_style = host
+# Only "v" is read. +h and above are always exempt
+exempt_modes = vho
+# Global enable/disable switch (default: true)
+enabled = true
 ```
 
 **Note:** Unlike `antiflood`, JPQ is **enabled by default in all channels**. Channels must be explicitly disabled using the `$jpq off` command if desired.
@@ -59,6 +67,10 @@ All commands require **bot admin** privileges and must be used in a channel. `$j
 * **Announcement**: The channel notice is limited to one every 5 seconds. The event count is printed in normal text so IRC color codes do not swallow the digits.
 * **Exemptions**: Halfops and above (`+h`, `+o`, `+a`, `+q`) are always skipped. That includes the quit and the rejoin before ChanServ restores the mode. A mode change that leaves them below halfop removes that exemption. Voice is skipped only when `exempt_modes` contains `v`.
 * **Whitelist**: A nick matches that nickname. A hostmask matches `user@host`, including `*` and `?` globs. The JPQ list and the antiflood list are both checked, so `$jpq whitelist add` and `$flood whitelist add` each protect against both bans. Removing an entry only deletes it from the list it was added to.
-* **Other skips**: Sopel's `nick_blocks` and `host_blocks` are ignored.
+* **Other skips**: users on the core `nick_blocks` and `host_blocks` lists are ignored.
 * **Grace Period**: After a bot kick, that hostmask is ignored for 60 seconds so the kick and ban do not count as more flood events.
 * **Auto-Unban**: When bans are on and `ban_duration` is greater than 0, a timer removes the ban. Pending timers are cancelled when the bot shuts down, but the pending unbans are saved and rescheduled when the plugin loads again (overdue ones run about a minute after loading).
+
+---
+
+*Using Sopel instead? This plugin should also work there: put it in `~/.sopel/scripts/` and any config section in `~/.sopel/default.cfg`. See [Using with Sopel](../README.md#-using-with-sopel).*
