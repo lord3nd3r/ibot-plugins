@@ -2,7 +2,7 @@
 
 from sopel import module
 
-COMMANDS_URL = "https://github.com/lord3nd3r/sopel-scripts/blob/main/commands.md"
+COMMANDS_URL = "https://github.com/lord3nd3r/ibot-plugins/blob/main/commands.md"
 
 
 @module.commands("help", "commands", "cmds")
