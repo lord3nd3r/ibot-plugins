@@ -42,7 +42,7 @@ All plugins have detailed documentation, command references, and setup instructi
 | **botadmin** | Bot owner and admin management commands (`$restart`, `$breload`, `$raw`, `$say`, `$bjoin`, etc.) | [docs/botadmin.md](docs/botadmin.md) |
 | **opme** | Channel self-promotion command for authorized users (`$promoteme`) | [docs/opme.md](docs/opme.md) |
 | **autoop** | Automatic mode granting (`+o`, `+h`, `+v`) on join for configured users | [docs/autoop.md](docs/autoop.md) |
-| **autovoice** | Activity-based auto-voicing (`+v`) after 50 messages, with idle voice removal | [docs/autovoice.md](docs/autovoice.md) |
+| **autovoice** | Activity-based auto-voicing (`+v`) after 50 messages (adjustable per channel), with idle voice removal | [docs/autovoice.md](docs/autovoice.md) |
 | **join** | Owner command to make the bot join public or key-protected channels | [docs/join.md](docs/join.md) |
 
 ### 🛠️ Utility & Information
@@ -58,6 +58,7 @@ All plugins have detailed documentation, command references, and setup instructi
 | **rizonhelp** | Quick Rizon IRC network help topics and FAQ | [docs/rizonhelp.md](docs/rizonhelp.md) |
 | **tell** | Offline message storage delivered via PM when target speaks | [docs/tell.md](docs/tell.md) |
 | **seen** | Track and report when a user was last seen speaking in channel | [docs/seen.md](docs/seen.md) |
+| **feeds** | RSS/Atom feed poster: global feed list, per-channel subscriptions, de-duplication, & link shortening (`$feed`) | [docs/feeds.md](docs/feeds.md) |
 | **url_titles** | Automatic webpage HTML `<title>` tag fetcher | [docs/url_titles.md](docs/url_titles.md) |
 | **youtube_titles** | Auto-detect YouTube links and display video titles and channels | [docs/youtube_titles.md](docs/youtube_titles.md) |
 

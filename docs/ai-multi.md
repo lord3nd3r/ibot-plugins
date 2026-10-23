@@ -58,6 +58,12 @@ ignored_nicks =
 #   off       — respond to any nick mention
 #   model     — not implemented; falls back to heuristic
 intent_check = heuristic
+
+# Optional — natural-language actions ("glitchy get me a beer" runs $beer)
+nl_actions = on
+# extra public command names to allow / command names to never auto-run
+nl_actions_allow =
+nl_actions_deny =
 ```
 
 **Personality (natural language to the bot):** defaults to **per-user**.  
@@ -174,6 +180,39 @@ Grok: search for election results with sources
 **Trigger phrases:** `show me the links`, `sources`, `citations`, `references`, `urls`, `include links`
 
 > **Note:** The bot uses a strict extraction system that queries the API for genuine deep-link article URLs to prevent hallucinations. It does not output raw links mid-sentence; instead, it generates a clean list of verified, clickable sources at the end of its response.
+
+---
+
+## 📋 Command Help ("how do I ...?")
+
+When someone asks the bot about its own commands (e.g. `glitchy what commands do you have?`, `glitchy how do I check the weather?`, `glitchy what's the syntax for $feed?`), it answers from a **live command catalog** instead of guessing.
+
+- The catalog is built from the commands and inline triggers ibot actually has registered (plugin decorators, docstrings, and examples), with gaps filled from the `docs/*.md` command tables. It is cached and only rebuilt when the loaded plugin set changes (`$rehash`, `$reload`, `$load`, `$unload`).
+- The bot is told to answer **only** with commands from the catalog and not to invent commands or options.
+- **Admin/op-only commands are hidden** unless the asker is privileged, and are never listed in a public channel for an unprivileged user.
+- Each ready-to-type command is sent on **its own IRC line** so it can be copied directly.
+- Short follow-ups within 3 minutes of a command question are treated as more help, not as an order.
+
+---
+
+## 🍺 Natural-Language Actions
+
+A line addressed to the bot that plainly asks for something a **public, harmless** command does is run through ibot's normal command dispatch, exactly as if the user had typed the command — permissions, ignore lists, disabled plugins, and rate limits still apply, and the plugin's own output is the reply.
+
+| You say | Runs |
+|---------|------|
+| `glitchy get me a beer` | `$beer` |
+| `glitchy pour DmD a whiskey` | `$whiskey DmD` |
+| `glitchy can I get an irish coffee` | `$coffee irish` |
+| `glitchy pass the joint to DmD` | `$pass DmD joint` |
+| `glitchy get me the weather in Boston` | `$w Boston` |
+| `glitchy flip the table` | `$flip` |
+
+- **Default allowed commands:** `beer.py` drinks/food, `weed.py` sessions, and harmless lookups (`$cat`, `$flip`, `$shrug`, `$karma`, `$seen`, `$w`, `$f`, `$stock`, `$wiki`, `$bal`, `$inv`, moo stats, etc.).
+- **Never auto-run:** anything not public, anything involving amounts/numbers (bets, transfers), and moderation/admin/economy commands (antispam, jpq, opme, join, `$give`, `$mug`, `$tell`, `$quote`, `$vote`, `$autovoice`, and similar).
+- Questions, past/future tense ("did you…", "I had a beer yesterday"), and help-style phrasing fall through to normal AI chat.
+- Per-user cooldown of **8 seconds** between actions.
+- Turn off with `nl_actions = off`; add public commands with `nl_actions_allow`, or block commands with `nl_actions_deny` (comma-separated names, `$` optional).
 
 ---
 
@@ -489,6 +528,9 @@ Long-lived structures like `grok_history`, `grok_locks`, and `grok_channel_log` 
 | `banned_nicks` | list | — | Nicks completely blocked |
 | `ignored_nicks` | list | — | Nicks silently ignored |
 | `intent_check` | choice | `heuristic` | Mention detection mode |
+| `nl_actions` | string | `on` | Natural-language actions (`on` / `off`) |
+| `nl_actions_allow` | string | — | Comma-separated extra public commands that may be auto-run |
+| `nl_actions_deny` | string | — | Comma-separated commands that are never auto-run |
 
 **Supported models:**
 

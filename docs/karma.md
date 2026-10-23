@@ -25,9 +25,9 @@ pip install sqlalchemy
 
 | Syntax | Effect |
 |--------|--------|
-| `nick++` | Give +1 karma |
-| `nick--` | Give -1 karma |
-| `nick==` | Check a nick's karma inline |
+| `nick++` | Give +1 karma (whole message, channel only — not in PM; you can't karma yourself) |
+| `nick--` | Give -1 karma (whole message, channel only — not in PM; you can't karma yourself) |
+| `nick==` | Check a nick's global karma inline (whole message) |
 
 ## Commands
 

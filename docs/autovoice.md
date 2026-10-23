@@ -20,7 +20,7 @@ Activity-based auto-voicer. Tracks chat activity per user and automatically gran
 ## How It Works
 
 1. Every channel message is counted per user per channel (only in enabled channels).
-2. Once a user reaches **50 messages**, they automatically receive `+v`.
+2. Once a user reaches the channel's **message threshold** (default **50 messages**, adjustable per channel with `$autovoice threshold <n>`), they automatically receive `+v`.
 3. **Auto-revoice on rejoin** — if a user who already earned `+v` parts and rejoins, they are automatically re-voiced within a few seconds.
 4. A background thread sweeps every **15 minutes** to:
    - Voice any users who crossed the threshold since the last check.
@@ -39,10 +39,15 @@ Activity-based auto-voicer. Tracks chat activity per user and automatically gran
 | `$autovoice off` | Disable autovoice for this channel |
 | `$autovoice status` | Show on/off state, tracked user count, and threshold info |
 | `$autovoice reset <nick>` | Clear a specific user's message count and activity data |
-| `$autovoice threshold` | Display current message threshold and idle timeout |
+| `$autovoice block <nick>` | Never autovoice this nick in this channel (also resets their count) |
+| `$autovoice unblock <nick>` | Remove a nick from the channel's block list |
+| `$autovoice blocklist` | List nicks blocked from autovoice in this channel |
+| `$autovoice threshold` | Display this channel's message threshold and idle timeout |
+| `$autovoice threshold <n>` | Set this channel's message threshold (1–100000; default 50). Saved across restarts |
+| `$autovoice #channel threshold <n>` | Set a channel's threshold from PM (any subcommand works from PM with `#channel` first) |
 | `$autovoice check [nick]` | Check your (or someone's) progress toward +v |
 
-> **Permission:** `on`, `off`, `reset`, `status`, and `threshold` require **halfop+** or **bot admin**. `check` is available to anyone.
+> **Permission:** every `$autovoice` subcommand (including `threshold` and `check`) requires **halfop+** in that channel or **bot admin**. Anyone can check progress with `$vcheck`.
 
 ### Progress Check (`$vcheck`)
 
@@ -100,6 +105,20 @@ Anyone can check autovoice progress — no special permissions needed.
 <Glitchy> Boliver: 23/50 msgs (46%) — 27 more to go for +v
 ```
 
+**Change the threshold for this channel:**
+```
+<%Admin> $autovoice threshold 10
+<Glitchy> Autovoice threshold for #chat set to 10 messages.
+<%Admin> $autovoice threshold
+<Glitchy> Current threshold in #chat: 10 messages to earn +v, 7 days idle to lose it.
+```
+
+**Set a threshold from PM:**
+```
+/msg Glitchy $autovoice #chat threshold 25
+<Glitchy> Autovoice threshold for #chat set to 25 messages.
+```
+
 **Reset a user's data:**
 ```
 <%Admin> $autovoice reset someuser
@@ -114,7 +133,7 @@ These constants are at the top of `autovoice.py` and can be adjusted:
 
 | Constant | Default | Description |
 |----------|---------|-------------|
-| `MSG_THRESHOLD` | `50` | Messages needed to earn `+v` |
+| `MSG_THRESHOLD` | `50` | Default messages needed to earn `+v` (override per channel with `$autovoice threshold <n>`) |
 | `IDLE_SECONDS` | `604800` (7 days) | Idle time before voice is removed |
 | `SWEEP_INTERVAL` | `900` (15 min) | How often the background sweep runs |
 
@@ -137,6 +156,8 @@ This means ChanServ-assigned modes, access list modes, and manually-set modes ar
 
 `~/.sopel/autovoice_data.json` stores:
 - **Per-channel enabled/disabled state**
+- **Per-channel message thresholds** (set with `$autovoice threshold <n>`)
+- **Per-channel block lists**
 - **Per-user per-channel message counts and last-seen timestamps**
 
 The file is updated periodically and on plugin shutdown. Stale entries are automatically pruned.

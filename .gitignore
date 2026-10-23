@@ -12,3 +12,4 @@ test_trivia.db
 grok_channel_prompts.json
 _update_readme.py
 grok_api_last_response.json
+*.BACKUP

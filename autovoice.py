@@ -39,6 +39,7 @@ _PRIV_OWNER  = 16
 _data_lock = threading.RLock()
 _data = None          # {"channels": {"#chan": {"nick": {"count": N, "last": epoch}}}}
 _enabled = None       # {"#chan": bool}
+_thresholds = None    # {"#chan": N} per-channel override of MSG_THRESHOLD
 _blocked = None       # {"#chan": ["nick1", "nick2", ...]} — never autovoice these
 _sweep_stop = threading.Event()
 _sweep_thread = None
@@ -47,7 +48,7 @@ _sweep_thread = None
 # ═══════════════════════════════ persistence ═════════════════════════
 
 def _load():
-    global _data, _enabled, _blocked
+    global _data, _enabled, _blocked, _thresholds
     with _data_lock:
         if _data is not None:
             return
@@ -58,22 +59,34 @@ def _load():
                 _data = raw.get('channels', {})
                 _enabled = raw.get('enabled', {})
                 _blocked = raw.get('blocked', {})
+                _thresholds = raw.get('thresholds', {})
             except Exception:
                 LOG.exception('autovoice: failed to load %s', DATA_FILE)
                 _data = {}
                 _enabled = {}
                 _blocked = {}
+                _thresholds = {}
         else:
             _data = {}
             _enabled = {}
             _blocked = {}
+            _thresholds = {}
+
+
+def _threshold(channel):
+    """Messages needed for +v in this channel (per-channel override or default)."""
+    try:
+        return int((_thresholds or {}).get(str(channel).lower(), MSG_THRESHOLD))
+    except (TypeError, ValueError):
+        return MSG_THRESHOLD
 
 
 def _save():
     with _data_lock:
         if _data is None:
             return
-        payload = {'channels': _data, 'enabled': _enabled or {}, 'blocked': _blocked or {}}
+        payload = {'channels': _data, 'enabled': _enabled or {}, 'blocked': _blocked or {},
+                   'thresholds': _thresholds or {}}
     tmp = DATA_FILE + '.tmp'
     try:
         with open(tmp, 'w') as f:
@@ -193,7 +206,7 @@ def _sweep(bot):
             idle = (now - last) > IDLE_SECONDS
             autovoiced = info.get('autovoiced', False)
 
-            if count >= MSG_THRESHOLD and not has_voice and not idle:
+            if count >= _threshold(channel) and not has_voice and not idle:
                 if not _is_blocked(channel, nick_lower):
                     to_voice.append(nick_lower)
             elif has_voice and autovoiced and idle:
@@ -298,11 +311,11 @@ def track_message(bot, trigger):
         count = rec['count']
 
     # Check if this message just pushed them over the threshold
-    if count == MSG_THRESHOLD:
+    if count == _threshold(channel):
         if _bot_has_halfop(bot, channel) and not _user_has_mode(bot, channel, nick):
             if not _is_blocked(channel, nick_lower):
                 bot.write(['MODE', channel, '+v', nick])
-                LOG.info('autovoice: +v %s in %s (hit %d msgs)', nick, channel, MSG_THRESHOLD)
+                LOG.info('autovoice: +v %s in %s (hit %d msgs)', nick, channel, _threshold(channel))
                 with _data_lock:
                     _data.get(channel, {}).get(nick_lower, {})['autovoiced'] = True
 
@@ -338,7 +351,7 @@ def on_join_revoice(bot, trigger):
         last = rec.get('last', 0)
 
     # Re-voice if they've earned it and aren't idle
-    if count >= MSG_THRESHOLD and (time.time() - last) < IDLE_SECONDS:
+    if count >= _threshold(channel) and (time.time() - last) < IDLE_SECONDS:
         # Check if antispam recently kicked this user — don't re-voice if so
         spam_kicked = bot.memory.get('spam_kicked', {})
         kick_time = spam_kicked.get((channel, nick_lower))
@@ -362,6 +375,7 @@ def on_join_revoice(bot, trigger):
 @module.example('$autovoice status')
 @module.example('$autovoice reset <nick>')
 @module.example('$autovoice block <nick>')
+@module.example('$autovoice threshold 10')
 def autovoice_cmd(bot, trigger):
     """Manage autovoice. Works in channel or PM ($autovoice #channel <cmd>)."""
     args = (trigger.group(2) or '').strip().split()
@@ -409,7 +423,7 @@ def autovoice_cmd(bot, trigger):
         state = '\x0303ON\x03' if on else '\x0304OFF\x03'
         bot.say(f'Autovoice is {state} | Tracking \x02{tracked}\x02 users | '
                 f'Blocked: \x02{blocked_count}\x02 | '
-                f'Threshold: {MSG_THRESHOLD} msgs | Idle timeout: {IDLE_SECONDS // 86400}d')
+                f'Threshold: {_threshold(channel)} msgs | Idle timeout: {IDLE_SECONDS // 86400}d')
 
     elif subcmd == 'reset':
         target = args[1] if len(args) > 1 else None
@@ -473,7 +487,18 @@ def autovoice_cmd(bot, trigger):
                     + ', '.join(f'\x02{n}\x02' for n in sorted(blocked_list)))
 
     elif subcmd == 'threshold':
-        bot.say(f'Current threshold: \x02{MSG_THRESHOLD}\x02 messages to earn +v, '
+        if len(args) > 1:
+            if not args[1].isdigit() or not 1 <= int(args[1]) <= 100000:
+                bot.reply('Usage: $autovoice threshold <number>  (1-100000)')
+                return
+            n = int(args[1])
+            with _data_lock:
+                _thresholds[channel] = n
+            _save()
+            bot.say(f'Autovoice threshold for {channel} set to \x02{n}\x02 messages.')
+            LOG.info('autovoice: threshold for %s set to %d by %s', channel, n, nick)
+            return
+        bot.say(f'Current threshold in {channel}: \x02{_threshold(channel)}\x02 messages to earn +v, '
                 f'\x02{IDLE_SECONDS // 86400}\x02 days idle to lose it.')
 
     elif subcmd == 'check':
@@ -481,7 +506,7 @@ def autovoice_cmd(bot, trigger):
         _vcheck_report(bot, trigger, channel, target)
 
     else:
-        bot.reply('Usage: $autovoice <on|off|status|reset|block|unblock|blocklist|threshold|check> [nick]')
+        bot.reply('Usage: $autovoice <on|off|status|reset|block|unblock|blocklist|threshold [n]|check> [nick]')
 
 
 @module.commands('vcheck')
@@ -524,18 +549,19 @@ def _vcheck_report(bot, trigger, channel, target_lower):
         chan_data = (_data or {}).get(channel, {})
         rec = chan_data.get(target_lower)
 
+    thr = _threshold(channel)
     display_nick = target_lower
     if rec and isinstance(rec, dict):
         display_nick = rec.get('nick', target_lower)
         count = rec.get('count', 0)
-        remaining = max(0, MSG_THRESHOLD - count)
+        remaining = max(0, thr - count)
         if remaining == 0:
             bot.say(f'\x02{display_nick}\x02 has reached the threshold '
-                    f'({count}/{MSG_THRESHOLD} msgs) \x0303✓ voiced\x03')
+                    f'({count}/{thr} msgs) \x0303✓ voiced\x03')
         else:
-            pct = int((count / MSG_THRESHOLD) * 100)
-            bot.say(f'\x02{display_nick}\x02: {count}/{MSG_THRESHOLD} msgs '
+            pct = int((count / thr) * 100)
+            bot.say(f'\x02{display_nick}\x02: {count}/{thr} msgs '
                     f'({pct}%) — \x02{remaining}\x02 more to go for +v')
     else:
         bot.say(f'No activity recorded for \x02{target_lower}\x02 in {channel} '
-                f'(need {MSG_THRESHOLD} msgs for +v).')
+                f'(need {thr} msgs for +v).')

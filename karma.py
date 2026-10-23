@@ -404,6 +404,8 @@ def _cleanup_flood_events(bot):
 # ──────────────────────────────────────────────────────────────
 @module.rule(r'^\s*(?:[a-zA-Z0-9_\[\]\\^`{\}\|-]|[^\s\+\-][^\s]*?[a-zA-Z0-9_\[\]\\^`{\}\|-])(?:\+\+|--)\s*$')
 def karma_increment_decrement(bot, trigger):
+    """Give or take karma inline: type nick++ (+1) or nick-- (-1) as the whole message in a channel.
+    Channel only (not in PM); you can't karma yourself; 10-minute cooldown per giver per channel."""
     if trigger.is_privmsg:
         return bot.reply(PRIVATE_KARMA_MESSAGE)
 
@@ -533,6 +535,7 @@ def karma_increment_decrement(bot, trigger):
 # ──────────────────────────────────────────────────────────────
 @module.rule(r'^\S+\s*==\s*$')
 def karma_show_inline(bot, trigger):
+    """Check someone's global karma inline: type nick== as the whole message."""
     if trigger.nick and str(trigger.nick).lower() == str(bot.nick).lower():
         return
     target = trigger.group(0).split('==', 1)[0].strip()

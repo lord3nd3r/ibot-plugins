@@ -27,8 +27,9 @@ The bot command prefix is **`$`** unless noted otherwise.
 | [🔑 PromoteMe](docs/opme.md) | Promote yourself or a target to channel op |
 | [🚪 Join](docs/join.md) | Make the bot join a channel (owner only) |
 | [🎬 YouTube Titles](docs/youtube_titles.md) | Auto-detect YouTube links and show video info |
+| [📰 RSS/Atom Feeds](docs/feeds.md) | Post new RSS/Atom feed items to subscribed channels (`$feed`) |
 | [🔗 URL Titles](docs/url_titles.md) | Automatic webpage title fetching (`$urltitle on/off`) |
-| [🎙️ Auto Voice](docs/autovoice.md) | Activity-based auto-voicing for active chatters |
+| [🎙️ Auto Voice](docs/autovoice.md) | Activity-based auto-voicing for active chatters (per-channel threshold) |
 | [🤖 Auto Op](docs/autoop.md) | Auto-mode list for +o, +h, and +v on join |
 | [🛡️ Antiflood](docs/antiflood.md) | Join/part cycle flood protection |
 | [🛡️ Antispam](docs/antispam.md) | Multi-mode anti-spam and Grok AI kick protection |

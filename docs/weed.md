@@ -47,7 +47,7 @@ All commands support an optional target `<nick>` argument. If the target is pres
 
 | Command | Arguments | Description | Example |
 |---------|-----------|-------------|---------|
-| `$pass` | `<nick>` | Take a hit and pass the rotation to someone else (requires target in channel) | `$pass Friend` |
+| `$pass` | `<nick> [item]` | Take a hit and pass the rotation to someone else (requires target in channel). Passes whatever was last rolled/lit in the channel within the past hour (e.g. after `$blunt` it passes the blunt), or name an item: `joint`, `jay`, `doobie`, `spliff`, `blunt`, `bong`, `toke`/`bowl`, `pipe`, `vape`, `dab`/`dabs`/`dab rig` | `$pass Friend`, `$pass Friend bong` |
 | `$sober` | `[nick]` | Sober up the bot in this channel, or splash cold water/coffee on another user | `$sober`, `$sober Glitchy` |
 | `$unhigh` | `[nick]` | Alias for `$sober` | `$unhigh` |
 | `$weedhelp` | — | PM a complete command reference card to the user | `$weedhelp` |

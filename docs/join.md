@@ -27,7 +27,7 @@ owner = YourNick
 
 | Command | Who | Description |
 |---------|-----|-------------|
-| `$join #channel [key]` | Owner only | Make the bot join a channel |
+| `$join #channel [key]` | Owner only | Make the bot join a channel for this session only (not saved — use `$bjoin` to also auto-rejoin on restart) |
 
 ### Parameters
 

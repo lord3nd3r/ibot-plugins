@@ -1091,6 +1091,7 @@ def weed_commands(bot, trigger):
     now = time.time()
     user_id = trigger.account or trigger.nick
     cmd = trigger.group(1).lower()
+    LAST_WEED_ITEM[str(channel).lower()] = (cmd, now)
 
     gifts, action_msgs, final_msgs, countdown_msgs = DATA.get(cmd, DATA['weed'])
 
@@ -1192,6 +1193,11 @@ def weed_inline(bot, trigger):
 # =======================
 # PASS Command
 # =======================
+# Last weed item rolled/lit per channel, so $pass hands over the right thing.
+LAST_WEED_ITEM = {}
+PASS_ITEM_NAMES = {'joint': 'joint', 'jay': 'joint', 'doobie': 'doobie', 'spliff': 'spliff', 'blunt': 'blunt',
+                   'bong': 'bong', 'toke': 'bowl', 'vape': 'vape', 'dab': 'dab rig', 'dabs': 'dab rig'}
+
 PASS_ACTIONS = [
     "takes a fat rip from a bong 🫧💨 and passes it to {target}",
     "hits the joint, holds it… exhales a cloud ☁️ and slides it to {target}",
@@ -1223,9 +1229,11 @@ BOT_PASS_ACTIONS = [
 @module.example('$pass username', 'Take a hit and pass it to someone')
 def pass_command(bot, trigger):
     """Take a hit and pass something to a user."""
-    target = (trigger.group(2) or '').strip()
+    parts = (trigger.group(2) or '').split()
+    target = parts[0] if parts else ''
+    asked_item = ' '.join(parts[1:]).lower()
     if not target:
-        bot.notice("Usage: $pass <nick>", trigger.nick)
+        bot.notice("Usage: $pass <nick> [joint|bong|blunt|...]", trigger.nick)
         return
 
     channel = trigger.sender
@@ -1256,7 +1264,14 @@ def pass_command(bot, trigger):
         baked_tag = "baked" if intensity == 1 else ("blazed" if intensity == 2 else "zooted to another dimension")
         bot.action(f"{base_act} 🌿😵💨 ({bot.nick} is {baked_tag} in {channel} for ~{mins}m)")
     else:
-        bot.action(random.choice(PASS_ACTIONS).format(target=target))
+        last = LAST_WEED_ITEM.get(str(channel).lower())
+        item = PASS_ITEM_NAMES.get(last[0]) if last and now - last[1] < 3600 else None
+        if asked_item:
+            item = PASS_ITEM_NAMES.get(asked_item, asked_item if asked_item in ('bowl', 'pipe', 'dab rig') else None) or item
+        if item:
+            bot.action(f"takes a long pull off the {item} and passes it to {target}")
+        else:
+            bot.action(random.choice(PASS_ACTIONS).format(target=target))
 
 
 @module.commands('sober', 'unhigh')
