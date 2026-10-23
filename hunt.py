@@ -28,6 +28,7 @@ Database: ~/.sopel/hunt.db (SQLite)
 from __future__ import annotations
 
 import os
+import contextlib
 import sys
 import time
 import math
@@ -611,24 +612,45 @@ def _add_to_bag(nick: str, item_name: str, species: str, rarity: str, sell_value
 # ──────────────────────────────────────────────────────────────
 # Economy & Mug Game Bridge
 # ──────────────────────────────────────────────────────────────
+_MUG_MODULE_NAMES = ('ibot_plugins.mug', 'sopel_modules.mug', 'scripts.mug', 'mug')
+
+
+def _mug_module():
+    """Return the loaded mug.py module (ibot loads it as 'ibot_plugins.mug')."""
+    for name in _MUG_MODULE_NAMES:
+        mod = sys.modules.get(name)
+        if mod is not None and hasattr(mod, 'get_user_record') and hasattr(mod, '_save_data'):
+            return mod
+    return None
+
+
 def _has_mug(bot) -> bool:
     """Check if mug.py is loaded and available."""
     try:
-        if 'scripts.mug' in sys.modules or 'mug' in sys.modules:
-            return True
-        if hasattr(bot, 'has_plugin') and bot.has_plugin('mug'):
-            return True
+        return _mug_module() is not None
     except Exception:
-        pass
-    return False
+        return False
+
+
+@contextlib.contextmanager
+def _mug_locked(bot, mug_mod):
+    """Read-modify-write mug data under mug's own lock; mug saves afterwards."""
+    if hasattr(mug_mod, 'locked_data'):
+        with mug_mod.locked_data(bot):
+            yield
+    else:
+        with mug_mod._data_lock:
+            yield
+        mug_mod._save_data(bot)
 
 
 def _get_player_funds(bot, nick: str, hunter: sqlite3.Row) -> Tuple[int, str]:
     """Returns (amount, currency_name). Uses Mug coins if mug is present, else Spendable XP."""
-    if _has_mug(bot):
+    mug_mod = _mug_module()
+    if mug_mod is not None:
         try:
-            mug_mod = sys.modules.get('scripts.mug') or sys.modules.get('mug')
-            if mug_mod and hasattr(mug_mod, 'get_user_record'):
+            lock = getattr(mug_mod, '_data_lock', None) or contextlib.nullcontext()
+            with lock:
                 u = mug_mod.get_user_record(bot, nick)
                 return int(u.get('money', 0)), 'coins'
         except Exception as e:
@@ -638,17 +660,17 @@ def _get_player_funds(bot, nick: str, hunter: sqlite3.Row) -> Tuple[int, str]:
 
 def _deduct_player_funds(bot, nick: str, amount: int) -> bool:
     """Deduct currency from player."""
-    if _has_mug(bot):
+    mug_mod = _mug_module()
+    if mug_mod is not None:
         try:
-            mug_mod = sys.modules.get('scripts.mug') or sys.modules.get('mug')
-            if mug_mod and hasattr(mug_mod, 'get_user_record') and hasattr(mug_mod, '_save_data'):
+            ok = False
+            with _mug_locked(bot, mug_mod):
                 u = mug_mod.get_user_record(bot, nick)
                 current = int(u.get('money', 0))
                 if current >= amount:
                     u['money'] = current - amount
-                    mug_mod._save_data(bot)
-                    return True
-                return False
+                    ok = True
+            return ok
         except Exception as e:
             LOG.debug("Mug deduct failed: %s", e)
     with _db_lock, _get_conn() as conn:
@@ -662,14 +684,13 @@ def _deduct_player_funds(bot, nick: str, amount: int) -> bool:
 
 def _award_player_funds(bot, nick: str, amount: int):
     """Award currency to player."""
-    if _has_mug(bot):
+    mug_mod = _mug_module()
+    if mug_mod is not None:
         try:
-            mug_mod = sys.modules.get('scripts.mug') or sys.modules.get('mug')
-            if mug_mod and hasattr(mug_mod, 'get_user_record') and hasattr(mug_mod, '_save_data'):
+            with _mug_locked(bot, mug_mod):
                 u = mug_mod.get_user_record(bot, nick)
                 u['money'] = int(u.get('money', 0)) + amount
-                mug_mod._save_data(bot)
-                return
+            return
         except Exception as e:
             LOG.debug("Mug award failed: %s", e)
     with _db_lock, _get_conn() as conn:

@@ -14,7 +14,7 @@ The bot command prefix is **`$`**.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `$quote` | Get a random quote from the current channel | `$quote` |
+| `$quote` (alias `$q`) | Get a random quote from the current channel. Every `$quote …` form below also works as `$q …` | `$q` |
 | `$quote <id>` | Get a specific quote by its ID | `$quote 42` |
 | `$quote add <nick> <text>` | Add a new quote | `$quote add Ender Hello world!` |
 | `$quote search <term>` | Search quotes for a specific keyword | `$quote search funny` |

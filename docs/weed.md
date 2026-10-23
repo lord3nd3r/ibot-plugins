@@ -25,7 +25,7 @@ All commands support an optional target `<nick>` argument. If the target is pres
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
-| `$weed` | — | Weed session / gift 🌿 |
+| `$weed` | `$w33d` (1337-speak) | Weed session / gift 🌿 |
 | `$bong` | — | Bong rip with water bubbling countdown 🫧 |
 | `$joint` | — | Roll up and spark a joint 📜 |
 | `$jay` | `$doobie` | Joint aliases 📜 |

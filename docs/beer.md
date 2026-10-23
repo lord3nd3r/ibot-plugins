@@ -28,6 +28,7 @@ All prices are in **coins** (🪙). When specifying a target user or the bot (`[
 | `$whiskey [nick]` | `$whisky` | 12 🪙 | Fine whiskey 🥃 |
 | `$irish [nick]` | `$irishwhiskey` | 10 🪙 | Irish whiskey 🇮🇪🥃 |
 | `$beer [nick]` | — | 5 🪙 | Serve a random beer 🍺 |
+| `$b33r [nick]` | — | 5 🪙 | Serve a beer in 1337 speak 🍺 |
 | `$shot [nick]` | — | 7 🪙 | Serve a random shot 🥃 |
 | `$vodka [nick]` | — | 10 🪙 | Premium vodka 🥃 |
 | `$rum [nick]` | — | 10 🪙 | Spiced rum 🏴‍☠️🥃 |

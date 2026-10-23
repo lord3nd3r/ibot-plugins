@@ -37,7 +37,7 @@ message_delay = 0.5
 | `$votehelp` | Full help guide (sent via PM) |
 
 > **Aliases:** `$vote`, `$voting`, `$poll`.
-> **Duration formats:** `30s` (seconds), `15m` (minutes), `24h` (hours), `7d` (days). Default duration is `24h`. Options default to `1: Yes, 2: No` if none are specified.
+> **Duration formats:** `30s` (seconds), `15m` (minutes), `24h` (hours), `7d` (days). Default duration is `24h`. Options default to `1: Yes, 2: No` if none are specified. Durations must be between **10 seconds** and **30 days**, and a poll can have at most **10** options.
 
 ---
 

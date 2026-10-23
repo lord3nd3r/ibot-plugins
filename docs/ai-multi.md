@@ -92,25 +92,46 @@ Channel-wide (`in this channel` / `for everyone`) requires **op or bot admin**.
 | `BotNick: what do you remember about me` | Anyone | List all your saved facts |
 | `$grokreset` | Anyone | Reset your conversation history (not permanent facts) |
 | `$grokreset channel` | Op+ / Admin | Reset all channel conversation history |
-| `$remind <duration> <msg>` | Anyone | Set a timed reminder (e.g. `$remind 24h Do daily`, `$remind me 10m check oven`) |
-| `$remind list` | Anyone | List your active pending reminders |
+| `$remind <duration> <msg>` | Anyone | Set a timed reminder (e.g. `$remind 24h Do daily`, `$remind me 10m check oven`). Limits: 10 pending per user, 50 per channel, 300-char message, one `$remind` per 3s per user |
+| `$remind list` | Anyone | List your pending reminders (first 5 shown, then "+N more") |
 | `$remind del <id>` | Anyone | Cancel a pending reminder by ID |
 | `$badmin <add\|del\|list>` | Op+ / Admin | Manage per-channel bot admins (`$badmin add [#chan] <nick>`) |
 | `$ai <on\|off>` | Op+ / Admin | Enable/disable AI entirely for the channel |
 | `$talkback <on\|off>` | Op+ / Admin | Enable/disable unprompted chime-ins |
-| `$testemote` | Anyone | Test that the emote plugin is loaded |
+| `$testemote` | Admin | Check that the AI plugin is loaded and responding |
+
+### Profiles & Learned Facts
+
+| Command | Who | Description |
+|---------|-----|-------------|
+| `$profile [nick]` | Anyone (own) / Admin (others) | Show a stored profile. Always **sent by PM** (in a channel the bot just says "Sent you the profile by PM."). At most 10 fact lines; one use per 5s per user |
+| `$setprofile <nick> <field> <value>` | Admin | Set `nationality`, `location` or `weather_location` |
+| `$addfact <nick> <fact>` | Admin | Add a fact to a profile |
+| `$delfact <nick> <index>` | Admin | Remove a fact by index |
+| `$delprofile <nick>` | Admin | Delete a whole profile |
+| `$reviewfacts [limit]` | Admin | List pending auto-learned fact suggestions |
+| `$approve <id>` / `$reject <id>` | Admin | Accept or discard a fact suggestion |
+| `$learnfacts <nick>` | Admin | Run fact learning for a user now |
+
+### Diagnostics (Admin)
+
+| Command | Description |
+|---------|-------------|
+| `$aihistory` | Show the last prompt sent to the model (PM only) |
+| `$aistats` | AI health counters (always replied by PM) |
+| `$testapi` | Test the Grok API directly |
+| `$showextract` | Show the last fact-extraction API response |
 
 ### Admin PM Commands
 
 | Command | Description |
 |---------|-------------|
-| `$join #channel [key]` | Make bot join a channel |
 | `$part #channel` | Make bot leave a channel |
 | `$ignore <nick>` | Add nick to ignore list |
 | `$unignore <nick>` | Remove nick from ignore list |
-| `$say #channel <msg>` | Make bot say something in a target channel |
-| `$act #channel <action>` | Make bot do a /me action in a target channel |
-| `$tell #channel <directive>` | Send an AI directive into a target channel (inherits channel intoxication/sober state) |
+| `$shape #channel <directive>` / `$steer #channel <directive>` | Send an AI directive into a target channel (inherits channel intoxication/sober state); needs admin rights for that channel |
+
+These are read from PMs to the bot, so they must be sent by PM. The plugin also has `$join`, `$say`, `$act` and `$tell #channel` here, but under ibot a real command with the same name always wins (`$join` → join.py, `$say`/`$act` → the core admin plugin, `$tell` → tell.py), so those four never reach ai-multi.
 
 ### 🔍 Moderation: Schizo Check
 

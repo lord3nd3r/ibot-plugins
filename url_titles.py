@@ -10,9 +10,13 @@ Commands:
   $urltitle      — check whether URL title fetching is enabled
 """
 
+import importlib.util
 import logging
+import os
 import re
+import sys
 import threading
+import time
 
 import requests
 from bs4 import BeautifulSoup
@@ -34,8 +38,64 @@ HEADERS = {
                   '(KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 }
 MAX_BYTES  = 65_536   # read at most 64 KB to find the title
-TIMEOUT    = 8
+TIMEOUT    = 8        # per socket operation
+DEADLINE   = 10       # whole fetch, including redirects
 MAX_TITLE  = 200
+CHANNEL_COOLDOWN = 5   # seconds between titles in one channel
+USER_COOLDOWN    = 15  # seconds between titles for one nick
+
+
+def _netguard_import():
+    """Load the shared _netguard helper from this plugin's directory."""
+    for name in ('ibot_plugins._netguard', '_netguard'):
+        if name in sys.modules:
+            return sys.modules[name]
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_netguard.py')
+    spec = importlib.util.spec_from_file_location('ibot_plugins._netguard', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    sys.modules['ibot_plugins._netguard'] = mod
+    return mod
+
+
+_netguard = _netguard_import()
+
+_cooldown_lock = threading.Lock()
+_last_chan: dict[str, float] = {}
+_last_user: dict[str, float] = {}
+
+
+def _cooldown_ok(channel: str, nick: str) -> bool:
+    """Per-channel + per-nick cooldown; records the use when allowed."""
+    now = time.monotonic()
+    c, n = channel.lower(), nick.lower()
+    with _cooldown_lock:
+        if now - _last_chan.get(c, -1e9) < CHANNEL_COOLDOWN:
+            return False
+        if now - _last_user.get(n, -1e9) < USER_COOLDOWN:
+            return False
+        _last_chan[c] = now
+        _last_user[n] = now
+        if len(_last_user) > 2000:   # keep the dict bounded
+            cutoff = now - USER_COOLDOWN
+            for k in [k for k, v in _last_user.items() if v < cutoff]:
+                del _last_user[k]
+        return True
+
+
+def _guess_encoding(body: bytes, declared) -> str:
+    if declared:
+        return declared
+    try:
+        from requests.compat import chardet
+        if chardet is not None:
+            enc = chardet.detect(body).get('encoding')
+            if enc:
+                return enc
+    except Exception:
+        pass
+    return 'utf-8'
+
 
 # Channel toggle state: {channel_lower: bool}
 _channel_toggles: dict[str, bool] | None = None
@@ -143,22 +203,27 @@ def url_title(bot, trigger):
     if SKIP_DOMAINS.search(url):
         return
 
+    if not _cooldown_ok(str(trigger.sender), str(trigger.nick)):
+        return
+
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=TIMEOUT, stream=True)
-        resp.raise_for_status()
-
-        content_type = resp.headers.get('Content-Type', '')
-        if 'text/html' not in content_type:
+        # SSRF-guarded fetch: public hosts only (re-checked at connect time and
+        # on every redirect), total deadline, 64 KB cap, HTML only.
+        resp = _netguard.fetch(url, headers=HEADERS, max_bytes=MAX_BYTES,
+                               timeout=TIMEOUT, deadline=DEADLINE, truncate=True,
+                               require_ctype='text/html')
+        if resp.status_code >= 400 or not resp.content:
             return
-
-        raw_html = b''
-        for chunk in resp.iter_content(chunk_size=4096):
-            raw_html += chunk
-            if len(raw_html) >= MAX_BYTES:
-                break
-
-        encoding = resp.apparent_encoding or 'utf-8'
-        html = raw_html.decode(encoding, errors='replace')
+        declared = None
+        ctype = resp.headers.get('Content-Type', '')
+        mm = re.search(r'charset=([\w.:-]+)', ctype, re.I)
+        if mm:
+            declared = mm.group(1)
+        encoding = _guess_encoding(resp.content, declared)
+        try:
+            html = resp.content.decode(encoding, errors='replace')
+        except LookupError:
+            html = resp.content.decode('utf-8', errors='replace')
 
     except Exception:
         return

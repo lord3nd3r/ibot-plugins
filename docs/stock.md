@@ -38,6 +38,13 @@ pip install yfinance
    - 🔴 — price went **down** in that period
    - ⚪ — data not available for that period
 
+### Limits
+
+- One `$stock` per user every 15 seconds and one per channel every 5 seconds (extra requests are ignored silently; admins are exempt).
+- Queries must be letters, digits, spaces and `.-^=&'` only, up to 40 characters (otherwise: `❌ Invalid stock query.`).
+- Each lookup has a 20-second budget (`❌ Stock lookup for '…' timed out.`). At most 2 lookups run at once (`⏳ Stock lookups are busy, try again shortly.`).
+- Errors from Yahoo Finance are logged; the channel only sees a short generic message.
+
 ### Output Format
 
 ```

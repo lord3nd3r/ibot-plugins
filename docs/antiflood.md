@@ -52,4 +52,4 @@ All commands require **bot admin** privileges.
 * **Triggering**: If a user's join count meets or exceeds the `threshold` within the `window`, they are kicked and banned.
 * **Exemptions**: Users with configured exempt channel modes (default: `+v`, `+h`, `+o`, `+a`, `+q`) or who are whitelisted are bypassed. The antiflood list and the JPQ list are both checked, so an entry on either one skips both bans.
 * **Grace Period**: After a bot-initiated kick, a 60-second grace period applies to the hostmask to prevent event loops.
-* **Auto-Unban**: Banned users are automatically unbanned after `ban_duration` seconds (if duration > 0) via a background timer.
+* **Auto-Unban**: Banned users are automatically unbanned after `ban_duration` seconds (if duration > 0) via a background timer. Pending unbans are saved, so they still happen after a bot restart (overdue ones run about a minute after the plugin loads).

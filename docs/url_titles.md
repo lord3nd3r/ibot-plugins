@@ -46,6 +46,8 @@ Automatic URL title fetching plugin for Sopel/ibot. When a user posts a URL in c
 * **Exempted Domains**: Skips domains handled by other specialized plugins. By default, it ignores YouTube links (`youtube.com` and `youtu.be`), which are managed by the `youtube_titles` plugin.
 * **Performance Limits**:
   * **Size Guard**: Streams the request and reads at most **64 KB** of data to prevent downloading huge files.
-  * **Timeout**: Requests time out after **8 seconds** to prevent lagging bot threads.
+  * **Timeout**: Each request times out after **8 seconds**, and the whole fetch (including redirects) is limited to **10 seconds**.
+  * **Cooldowns**: At most one title per channel every **5 seconds** and one per user every **15 seconds**; links posted during a cooldown are skipped silently.
+* **Safety**: Only public `http`/`https` addresses are fetched. Links to private, loopback, link-local or other internal IPs (including hostnames that resolve to them) are ignored. Up to 5 redirects are followed, and each hop is checked the same way; the IP is checked again at connect time.
   * **Length Limit**: Title strings are truncated to **200 characters** with an ellipsis (`…`).
   * **Content Type**: Only parses pages with a `Content-Type` header containing `text/html`.

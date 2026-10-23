@@ -75,6 +75,7 @@ def setup(bot):
     bot.memory['karma_flood_settings'] = (
         bot.db.get_plugin_value('karma', 'flood_settings') or {}
     )
+    _restore_unbans(bot)
 
     # ── One-time purge of forbidden karma entries ──
     if bot.memory.get("karma_forbidden_cleaned"):
@@ -226,6 +227,55 @@ def _flood_bot_has_op(bot, channel):
     return False
 
 
+# --- Persisted temp-ban expiries (survive restarts) -------------------
+# Stored in the bot DB as plugin value (karma, 'pending_unbans'):
+#   {"<chan_lower> <banmask>": {"channel", "mask", "expires", "extra"}}
+_UNBAN_DB_KEY = 'pending_unbans'
+_unban_persist_lock = threading.Lock()
+_RESTORE_MIN_DELAY = 60   # overdue unbans run this long after startup
+                          # (gives the bot time to reconnect and get ops)
+
+
+def _persist_unban(bot, channel, banmask, expires, extra=None):
+    """Record (expires=epoch) or forget (expires=None) a pending unban."""
+    k = f"{str(channel).lower()} {banmask}"
+    try:
+        with _unban_persist_lock:
+            data = bot.db.get_plugin_value('karma', _UNBAN_DB_KEY) or {}
+            if expires is None:
+                if k not in data:
+                    return
+                data.pop(k, None)
+            else:
+                data[k] = {'channel': str(channel), 'mask': banmask,
+                           'expires': float(expires), 'extra': extra}
+            bot.db.set_plugin_value('karma', _UNBAN_DB_KEY, data)
+    except Exception:
+        LOGGER.exception("Karma flood: failed to persist pending unban")
+
+
+def _restore_unbans(bot):
+    """Reschedule unbans saved by a previous run."""
+    try:
+        with _unban_persist_lock:
+            data = bot.db.get_plugin_value('karma', _UNBAN_DB_KEY) or {}
+    except Exception:
+        LOGGER.exception("Karma flood: failed to load pending unbans")
+        return
+    now = time.time()
+    for entry in list(data.values()):
+        try:
+            delay = max(_RESTORE_MIN_DELAY, float(entry['expires']) - now)
+            _schedule_karma_unban(bot, entry['channel'], entry['mask'], entry.get('extra') or '', delay)
+            if entry.get('extra'):
+                bot.memory['karma_flood_banned_hosts'].add(entry['extra'])
+        except Exception:
+            LOGGER.exception("Karma flood: bad pending unban entry")
+    if data:
+        LOGGER.info("Karma flood: restored %d pending unban(s)", len(data))
+
+
+
 def _schedule_karma_unban(bot, channel, banmask, giver_host, duration):
     """Schedule an automatic unban after duration seconds."""
     if duration <= 0:
@@ -241,6 +291,7 @@ def _schedule_karma_unban(bot, channel, banmask, giver_host, duration):
     def _do_unban():
         bot.write(['MODE', channel, '-b', banmask])
         bot.memory['karma_flood_unbans'].pop(key, None)
+        _persist_unban(bot, channel, banmask, None)
         bot.memory['karma_flood_banned_hosts'].discard(giver_host)
         LOGGER.info("Karma flood: Auto-unbanned %s in %s", banmask, channel)
 
@@ -248,6 +299,7 @@ def _schedule_karma_unban(bot, channel, banmask, giver_host, duration):
     timer.daemon = True
     timer.start()
     bot.memory['karma_flood_unbans'][key] = timer
+    _persist_unban(bot, channel, banmask, time.time() + duration, giver_host)
 
 
 def _can_flood_announce(bot, channel):

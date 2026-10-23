@@ -113,7 +113,7 @@ When **3 or more unique accounts** target the same nick with karma changes in th
 2. **Bans** all attacker hostmasks (`*!*@host`)
 3. **Kicks** the current attacker
 4. **Rolls back** all karma damage from the flood window
-5. **Auto-unbans** after 10 minutes
+5. **Auto-unbans** after 10 minutes (pending unbans are saved and still happen after a bot restart)
 6. **Announces** the protection with restored karma values
 
 Subsequent attackers from the same wave are silently dropped and banned on arrival.

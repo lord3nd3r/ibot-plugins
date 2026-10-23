@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import os
 import sys
-import subprocess
+import time
 import logging
+import threading
 
 from sopel import module
 
@@ -18,7 +19,18 @@ OWNER_NICKS = {'end3r'}
 
 
 def _is_owner(bot, trigger):
-    """Check if the trigger nick is the bot owner."""
+    """Check if the trigger is from the bot owner.
+
+    Prefer the core's owner flag (which honours owner_account when set);
+    fall back to nick matching only when the trigger has no such flag.
+    """
+    if getattr(trigger, 'owner', False):
+        return True
+    try:
+        if getattr(bot.config.core, 'owner_account', None):
+            return False
+    except Exception:
+        pass
     nick = trigger.nick.lower()
     if nick in OWNER_NICKS:
         return True
@@ -68,43 +80,125 @@ def _pm_reply(bot, trigger, msg):
 # ------------------------------------------------------------------
 # $restart — restart the bot process (clean restart)
 # ------------------------------------------------------------------
+_restart_lock = threading.Lock()
+_restarting = False
+IBOT_HOME_FALLBACK = '/home/ender/ibot'
+
+
+def _ibot_home():
+    """Directory that contains the ``ibot`` package (cwd for ``-m ibot``)."""
+    mod = sys.modules.get('ibot')
+    path = getattr(mod, '__file__', None) if mod else None
+    if path:
+        return os.path.dirname(os.path.dirname(os.path.abspath(path)))
+    return IBOT_HOME_FALLBACK
+
+
+def _restart_argv(cfg_path):
+    """argv for re-exec: keep the original flags (e.g. -v) when possible."""
+    orig = list(sys.argv[1:])
+    if any(os.path.abspath(a) == cfg_path for a in orig if not a.startswith('-')):
+        args = [cfg_path if (not a.startswith('-') and os.path.abspath(a) == cfg_path) else a
+                for a in orig]
+    else:
+        args = [cfg_path] + [a for a in orig if a.startswith('-')]
+    return [sys.executable, '-m', 'ibot'] + args
+
+
+def _run_shutdowns(bot, timeout=5.0):
+    """Best effort: run plugin shutdown hooks so state is flushed."""
+    core = getattr(bot, '_bot', None)
+    plugins = list(getattr(getattr(core, 'dispatcher', None), 'plugins', []) or [])
+
+    def _go():
+        for p in plugins:
+            fn = getattr(p, 'shutdown_func', None)
+            if fn:
+                try:
+                    fn(bot)
+                except Exception:
+                    LOG.exception('shutdown hook for %s failed', getattr(p, 'name', '?'))
+
+    t = threading.Thread(target=_go, daemon=True, name='botadmin-restart-shutdown')
+    t.start()
+    t.join(timeout)
+
+
+def _exec_restart(bot, message):
+    """Fallback restart: run shutdown hooks, then re-exec
+    ``python -m ibot <cfg>`` from the ibot directory."""
+    cfg = getattr(getattr(bot, 'config', None), 'filename', None)
+    if not cfg:
+        raise RuntimeError('config filename unknown')
+    cfg_path = os.path.abspath(cfg)
+    home = _ibot_home()
+    if not os.path.isfile(cfg_path):
+        raise RuntimeError('config file not found')
+    if not os.path.isfile(os.path.join(home, 'ibot', '__main__.py')):
+        raise RuntimeError('ibot package not found')
+    argv = _restart_argv(cfg_path)
+    LOG.warning('restart: re-exec %s (cwd %s)', argv[:3], home)
+    # No QUIT first: if the core treats the server closing the link as
+    # "stop", the process could exit before we get to exec.  The IRC socket
+    # is non-inheritable, so exec closes it and the server drops us at once.
+    time.sleep(1.0)            # let the "Restarting" reply flush
+    _run_shutdowns(bot)
+    logging.shutdown()
+    os.chdir(home)
+    os.execv(sys.executable, argv)
+
+
 @module.commands('restart')
 def restart(bot, trigger):
     """$restart — Restart the bot (owner only)."""
+    global _restarting
     if not _is_owner(bot, trigger):
         _deny(bot, trigger)
         return
-    _pm_reply(bot, trigger, '🔄 Rehashing — restarting bot process...')
-    LOG.info('REHASH requested by %s', trigger.nick)
-    # Find the config file the bot is using
-    cfg_name = None
+    with _restart_lock:
+        if _restarting:
+            _pm_reply(bot, trigger, '⏳ Restart already in progress.')
+            return
+        _restarting = True
+    msg = 'Restarting — be right back!'
+    _pm_reply(bot, trigger, '🔄 Restarting bot process...')
+    LOG.info('RESTART requested by %s', trigger.nick)
     try:
-        cfg_path = bot.config.filename
-        if cfg_path:
-            cfg_name = os.path.basename(cfg_path)
-    except Exception:
-        pass
-    # Use subprocess to restart via sopel CLI so the daemon re-spawns
-    sopel_bin = os.path.join(os.path.dirname(sys.executable), 'sopel')
-    cmd = [sopel_bin, 'restart']
-    if cfg_name:
-        cmd += ['-c', cfg_name]
-    try:
-        subprocess.Popen(cmd, cwd=os.path.expanduser('~/.sopel'))
-    except Exception:
-        LOG.exception('rehash: subprocess failed, falling back to bot.restart()')
+        # Preferred: the core's own restart (ibot shim, when available).
+        if callable(getattr(bot, 'restart', None)):
+            bot.restart(msg)
+            return
+        _exec_restart(bot, msg)
+    except Exception as e:
+        LOG.exception('restart failed')
+        with _restart_lock:
+            _restarting = False
+        _pm_reply(bot, trigger, f'❌ Restart failed ({type(e).__name__}); bot still running.')
+
+
+# ------------------------------------------------------------------
+# $breload <module|all> — alias for the core $reload / $rehash
+# ------------------------------------------------------------------
+def _core_handler(bot, command):
+    """Find another plugin's handler for ``command`` (e.g. ibot core admin)."""
+    core = getattr(bot, '_bot', None)
+    handlers = getattr(getattr(core, 'dispatcher', None), '_command_handlers', None) or []
+    for entry in handlers:
         try:
-            bot.restart('Rehashing — be right back!')
-        except Exception:
-            bot.quit('Rehashing — be right back!')
+            _compiled, func, pname = entry
+        except (TypeError, ValueError):
+            continue
+        if pname == __name__.rsplit('.', 1)[-1] or pname == 'botadmin':
+            continue
+        if command in (getattr(func, '_commands', None) or ()):
+            return func
+    return None
 
 
-# ------------------------------------------------------------------
-# $breload <module> — reload a specific plugin
-# ------------------------------------------------------------------
 @module.commands('breload')
 def reload_plugin(bot, trigger):
-    """$breload <module> — Reload a specific plugin (owner only)."""
+    """$breload <module|all> — Reload one plugin (same as $reload) or all
+    plugins (same as $rehash). Owner only."""
     if not _is_owner(bot, trigger):
         _deny(bot, trigger)
         return
@@ -113,49 +207,27 @@ def reload_plugin(bot, trigger):
         _pm_reply(bot, trigger, '❓ Usage: $breload <module_name|all>')
         return
     if arg.lower() == 'all':
-        # Reload every loaded plugin
-        if hasattr(bot, 'reload_plugins'):
-            try:
-                bot.reload_plugins()
-                _pm_reply(bot, trigger, '✅ All plugins reloaded.')
-            except Exception as e:
-                _pm_reply(bot, trigger, f'❌ Failed to reload all: {e}')
-                LOG.exception('Failed to reload all plugins')
-        elif hasattr(bot, 'reload_plugin'):
-            loaded = list(getattr(bot, '_plugins', {}).keys()) or []
-            if not loaded:
-                try:
-                    loaded = list(bot.backend._modules.keys())
-                except Exception:
-                    loaded = []
-            if not loaded:
-                _pm_reply(bot, trigger, '⚠️ Cannot enumerate plugins. Use $rehash instead.')
-                return
-            ok, fail = 0, 0
-            for name in loaded:
-                try:
-                    bot.reload_plugin(name)
-                    ok += 1
-                except Exception:
-                    fail += 1
-                    LOG.exception('Failed to reload plugin %s', name)
-            _pm_reply(bot, trigger, f'✅ Reloaded {ok} plugins. {f"❌ {fail} failed." if fail else ""}')
-        else:
-            _pm_reply(bot, trigger, '⚠️ This Sopel version does not support live reload. Use $rehash instead.')
+        func = _core_handler(bot, 'rehash')
+        if func is None:
+            _pm_reply(bot, trigger, '⚠️ Core $rehash not found; use $rehash.')
+            return
+        func(bot, trigger)
         return
-    try:
-        # Sopel 8 reload API
-        if hasattr(bot, 'reload_plugin'):
+    if callable(getattr(bot, 'reload_plugin', None)):
+        try:
             bot.reload_plugin(arg)
             _pm_reply(bot, trigger, f'✅ Reloaded plugin: {arg}')
-        elif hasattr(bot, 'reload_module'):
-            bot.reload_module(arg)
-            _pm_reply(bot, trigger, f'✅ Reloaded module: {arg}')
-        else:
-            _pm_reply(bot, trigger, '⚠️ This Sopel version does not support live reload. Use $rehash instead.')
-    except Exception as e:
-        _pm_reply(bot, trigger, f'❌ Failed to reload {arg}: {e}')
-        LOG.exception('Failed to reload plugin %s', arg)
+        except Exception as e:
+            LOG.exception('Failed to reload plugin %s', arg)
+            _pm_reply(bot, trigger, f'❌ Failed to reload {arg} ({type(e).__name__}).')
+        return
+    func = _core_handler(bot, 'reload')
+    if func is None:
+        _pm_reply(bot, trigger, '⚠️ Core $reload not found; use $reload <name>.')
+        return
+    # The core handler reads the plugin name from trigger.group(2), which is
+    # the same argument $breload received.
+    func(bot, trigger)
 
 
 # ------------------------------------------------------------------
@@ -171,7 +243,7 @@ def bothelp(bot, trigger):
         '🛠️ Bot Admin Commands:',
         '  $restart — Restart the bot process (owner)',
         '  $rehash — Hot-reload config and all plugins (owner)',
-        '  $breload <module|all> — Reload a plugin or all (owner)',
+        '  $breload <module|all> — Same as $reload <module> / $rehash (owner)',
         '  $reload <module> — Reload a single plugin (owner)',
         '  $bquit [msg] — Shut down the bot (owner)',
         '  $say <target> <msg> — Say something (admin)',

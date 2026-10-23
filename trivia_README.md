@@ -49,17 +49,17 @@ Just type your answer in the channel - the bot will check all messages automatic
 
 ### Interactive Mode (show answers immediately)
 ```bash
-python3 cli_trivia.py -i --num 20 --shuffle
+python3 _cli_trivia.py -i --num 20 --shuffle
 ```
 
 ### Demo Mode (timed hints, like IRC bot)
 ```bash
-python3 cli_trivia.py --num 10 --hint-delay 2 --shuffle
+python3 _cli_trivia.py --num 10 --hint-delay 2 --shuffle
 ```
 
 ### Category Mode
 ```bash
-python3 cli_trivia.py --category Geography -i --num 15
+python3 _cli_trivia.py --category Geography -i --num 15
 ```
 
 ### Options
@@ -86,9 +86,9 @@ If you need to reload:
 - **`trivia_game.py`** — Core game engine with hint generation
 - **`trivia_db.py`** — SQLite database layer for stats, leaderboards, and game history
 - **`questions.json`** — 465 categorized questions
-- **`cli_trivia.py`** — Standalone CLI runner for testing
+- **`_cli_trivia.py`** — Standalone CLI runner for testing
 - **`tests/test_trivia_game.py`** — Unit tests
-- **`demo_trivia.py`** — Demo script showing features
+- **`_demo_trivia.py`** — Demo script showing features
 
 ## Question Format
 

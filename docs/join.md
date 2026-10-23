@@ -66,4 +66,4 @@ owner = YourNick
 (no response — silently ignored for non-owners)
 ```
 
-> **Tip:** For admin-level join/part, see [$bjoin / $bpart in Bot Admin](botadmin.md) which allows configured admins.
+> **Tip:** For admin-level join/part, use the ibot core `$bjoin` / `$bpart` commands (listed in [Bot Admin](botadmin.md)), which allow configured admins.

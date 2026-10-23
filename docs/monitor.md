@@ -40,6 +40,13 @@ Tracks lines, words, actions, kicks, bans, joins, parts, quits, splits, and nick
 
 ---
 
+### How events are counted
+
+- **Quits / splits** are counted only for the channels the user was actually in at the time (the plugin keeps its own membership list from NAMES, JOIN, PART, KICK and NICK).
+- **Nick changes** are counted in each channel the user shares with the bot.
+- Nicks like `Guest1234` are not tracked.
+- Records for nicks not seen for 30 days are pruned every 10 minutes and at shutdown.
+
 ## Examples
 
 **Your own stats:**

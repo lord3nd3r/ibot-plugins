@@ -28,8 +28,8 @@ Play a 4-step table flip animation with timed delays between each frame.
 ## How It Works
 
 1. The bot sends **4 messages** with a **2 second delay** between each one.
-2. Messages are sent in a background thread so the bot isn't blocked during the animation.
-3. Each user has a **60-second cooldown per channel**. If triggered too soon, the bot sends a private NOTICE telling you how long to wait.
+2. Only one flip animation runs per channel at a time.
+3. Cooldowns: each user has a **60-second cooldown per channel**, and each channel has a **30-second cooldown** shared by everyone. If triggered too soon, the bot sends a private NOTICE telling you how long to wait — at most once per minute; repeat attempts are ignored silently.
 
 ### The Animation Sequence
 
@@ -59,6 +59,6 @@ Frame 4:  (╯°□°）╯︵ ┻━┻
 **On cooldown:**
 ```
 <User> $flip
--Glitchy- You need to wait 45 seconds before flipping again.
+-Glitchy- (｡•́︿•̀｡) Whoa! Please wait 45s before flipping again! ⏳✨
 ```
 > Cooldown notices are sent as a private NOTICE, not to the channel.

@@ -185,11 +185,11 @@ enabled = true
 <Glitchy> 🎡 The wheel spins... lands on 8. 1st dozen! You win 600 coins!
 ```
 
-### Blackjack ($bj)
+### Blackjack ($bj / $blackjack)
 
 | Command | Description |
 |---------|-------------|
-| `$bj <amount>` | Deal a hand vs the dealer |
+| `$bj <amount>` (alias `$blackjack`) | Deal a hand vs the dealer |
 | `$hit` | Draw another card |
 | `$stand` | Keep your hand, dealer plays |
 | `$dd` | Double down — double bet, one card, auto-stand |

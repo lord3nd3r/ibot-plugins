@@ -46,6 +46,13 @@ _time = time.monotonic
 # Cooldown tracking: (channel, nick) → timestamp
 LAST_MOO = {}
 LAST_SUDO = {}
+SUDO_NOTIFIED = {}        # (channel, nick) -> last cooldown notice timestamp
+_CD_LOCK = threading.Lock()
+
+# Per-channel cap on moo-triggered bot replies (cfg: [moo] max_rate_per_15sec).
+# 0 = unlimited.  Read leniently (the cfg value may carry an inline comment).
+MAX_RATE_PER_15SEC = 0
+_CHAN_RATE = {}           # channel -> deque of reply timestamps
 
 # Channel settings cache: channel_lower -> bool (True = enabled, False = disabled)
 CHANNEL_SETTINGS = {}
@@ -57,12 +64,46 @@ def _is_channel(name):
     return bool(name) and name.startswith(("#", "&", "+", "!"))
 
 
+def _cooldown_take(store, key, cooldown):
+    """Atomically check+set a cooldown.  True if the action may proceed."""
+    now = _time()
+    with _CD_LOCK:
+        if now - store.get(key, -1e9) < cooldown:
+            return False
+        store[key] = now
+        return True
+
+
+def _channel_rate_ok(chan):
+    """Global (all users) per-channel limit on moo replies."""
+    if MAX_RATE_PER_15SEC <= 0:
+        return True
+    from collections import deque
+    now = _time()
+    with _CD_LOCK:
+        dq = _CHAN_RATE.setdefault(chan, deque())
+        while dq and now - dq[0] > 15:
+            dq.popleft()
+        if len(dq) >= MAX_RATE_PER_15SEC:
+            return False
+        dq.append(now)
+        return True
+
+
+def _lenient_int(val, default):
+    try:
+        return int(str(val).split('#', 1)[0].split(';', 1)[0].strip())
+    except (TypeError, ValueError):
+        return default
+
+
 def _prune_cooldowns(store, max_age):
     """Lightly prune old cooldown entries to prevent unbounded growth."""
     now = _time()
-    to_delete = [k for k, t in store.items() if now - t > max_age]
-    for k in to_delete:
-        del store[k]
+    with _CD_LOCK:
+        to_delete = [k for k, t in store.items() if now - t > max_age]
+        for k in to_delete:
+            store.pop(k, None)
 
 
 def _load_channel_settings(bot):
@@ -211,6 +252,7 @@ def get_config(bot, option, default=None):
 def setup(bot):
     global BOT_NICK_LOWER
     global MOO_COOLDOWN, SUDO_COOLDOWN, LEGENDARY_CHANCE, SUDO_BIG_LOSS_CHANCE
+    global MAX_RATE_PER_15SEC
     BOT_NICK_LOWER = bot.nick.lower()
 
     parser = getattr(bot.config, "parser", None)
@@ -239,6 +281,8 @@ def setup(bot):
     except Exception:
         logger.exception("Invalid legendary_chance in config; using default")
         LEGENDARY_CHANCE = LEGENDARY_CHANCE
+
+    MAX_RATE_PER_15SEC = max(0, _lenient_int(get_config(bot, "max_rate_per_15sec", 0), 0))
 
     try:
         SUDO_BIG_LOSS_CHANCE = float(get_config(bot, "sudo_big_loss_chance", SUDO_BIG_LOSS_CHANCE))
@@ -622,30 +666,31 @@ def moo_response(bot, trigger):
     nick = trigger.nick
     key = (chan, nick.lower())
 
-    now = _time()
     _prune_cooldowns(LAST_MOO, 3600)
-
-    if now - LAST_MOO.get(key, 0) < MOO_COOLDOWN:
-        return
-    LAST_MOO[key] = now
 
     # Ignore zero-moo when leet_moo is OFF
     moo_token = (trigger.group(1) or "")
     if not get_config(bot, "leet_moo", True) and "0" in moo_token:
         return
 
+    if not _cooldown_take(LAST_MOO, key, MOO_COOLDOWN):
+        return
+    if not _channel_rate_ok(chan):
+        return
+
     _handle_moo_increment(bot, nick, chan, legendary=None, say_response=True)
 
 
 # --------------------------------------------------------------
-# /me moos (ACTION) with NO cooldown
+# /me moos (ACTION) — shares the text-moo cooldown (silent when on cooldown)
 # --------------------------------------------------------------
 # Match CTCP ACTIONs like: /me moos  OR  /me moos! (allow simple punctuation)
 # Register common punctuation variants to avoid using unsupported decorators
 @plugin.action_commands("moos", "moos!", "moos?", "moos.")
 def moo_action(bot, trigger):
     """
-    Handle /me moos (CTCP ACTION "moos") as a moo with no cooldown.
+    Handle /me moos (CTCP ACTION "moos") as a moo.  Uses the same per-user
+    cooldown as a typed moo plus the per-channel reply cap.
     """
     if not trigger.nick or trigger.nick.lower() == bot.nick.lower():
         return
@@ -655,7 +700,12 @@ def moo_action(bot, trigger):
     chan = (trigger.sender or "").lower()
     nick = trigger.nick
 
-    # No cooldown check here – always counts
+    _prune_cooldowns(LAST_MOO, 3600)
+    if not _cooldown_take(LAST_MOO, (chan, nick.lower()), MOO_COOLDOWN):
+        return
+    if not _channel_rate_ok(chan):
+        return
+
     _handle_moo_increment(bot, nick, chan, legendary=None, say_response=True)
 
 
@@ -675,20 +725,25 @@ def sudo_moo(bot, trigger):
 
     now = _time()
     _prune_cooldowns(LAST_SUDO, 86400)
+    _prune_cooldowns(SUDO_NOTIFIED, 86400)
 
-    last = LAST_SUDO.get(key, 0)
-
-    if now - last < SUDO_COOLDOWN:
-        remaining = int(SUDO_COOLDOWN - (now - last))
-        m = remaining // 60
-        s = remaining % 60
-        if m > 0:
-            bot.say(f"⏳ sudo moo cooldown for {nick}: {m}m {s}s left.")
-        else:
-            bot.say(f"⏳ sudo moo cooldown for {nick}: {s}s left.")
+    if not _cooldown_take(LAST_SUDO, key, SUDO_COOLDOWN):
+        # Silent in channel.  Tell the user privately, at most once per
+        # cooldown window, so repeated attempts can't make the bot spam.
+        if _cooldown_take(SUDO_NOTIFIED, key, SUDO_COOLDOWN):
+            with _CD_LOCK:
+                last = LAST_SUDO.get(key, now)
+            remaining = max(0, int(SUDO_COOLDOWN - (now - last)))
+            m, s = divmod(remaining, 60)
+            left = f"{m}m {s}s" if m > 0 else f"{s}s"
+            bot.notice(f"⏳ sudo moo cooldown: {left} left.", nick)
         return
 
-    LAST_SUDO[key] = now
+    if not _channel_rate_ok(chan):
+        # Don't burn the user's hourly sudo when the channel cap swallowed it.
+        with _CD_LOCK:
+            LAST_SUDO.pop(key, None)
+        return
 
     # Outcome probabilities (exclusive ranges):
     #  - 5% chance: big win (+30 moos)
@@ -774,6 +829,14 @@ def moo_command(bot, trigger):
         # Bare .moo / $moo command
         if not _is_moo_enabled(bot, chan):
             bot.notice(f"Moo is currently disabled in {chan}.", trigger.nick)
+            return
+        # Same per-user cooldown and per-channel cap as a typed moo; silent
+        # while on cooldown.
+        lchan = chan.lower()
+        _prune_cooldowns(LAST_MOO, 3600)
+        if not _cooldown_take(LAST_MOO, (lchan, trigger.nick.lower()), MOO_COOLDOWN):
+            return
+        if not _channel_rate_ok(lchan):
             return
         _handle_moo_increment(bot, trigger.nick, chan, legendary=None, say_response=True)
     else:

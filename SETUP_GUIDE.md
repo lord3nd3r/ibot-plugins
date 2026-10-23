@@ -8,8 +8,8 @@ All files are in place in your Sopel scripts directory:
   ├── trivia.py           (Sopel bot plugin)
   ├── trivia_game.py      (Game engine)
   ├── questions.json      (187 questions)
-  ├── cli_trivia.py       (CLI testing tool)
-  ├── demo_trivia.py      (Demo script)
+  ├── _cli_trivia.py       (CLI testing tool)
+  ├── _demo_trivia.py      (Demo script)
   └── tests/
       └── test_trivia_game.py
 ```
@@ -88,10 +88,10 @@ Test the game engine locally:
 python3 tests/test_trivia_game.py
 
 # Interactive CLI demo
-python3 cli_trivia.py -i --num 5 --shuffle
+python3 _cli_trivia.py -i --num 5 --shuffle
 
 # See statistics
-python3 demo_trivia.py
+python3 _demo_trivia.py
 ```
 
 ## 🔧 Customization

@@ -56,4 +56,4 @@ YouTube: Video Title
 
 > **Fail-silent:** If the oEmbed API call fails or the video is private/deleted, the bot simply doesn't respond — no error message is shown.
 >
-> **No cooldown.** Every YouTube link gets a response.
+> **Cooldowns:** at most one YouTube title per channel every **5 seconds** and one per user every **15 seconds**; links during a cooldown are skipped silently. Titles and channel names are stripped of IRC control/formatting characters.

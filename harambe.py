@@ -36,6 +36,7 @@ import re
 import sqlite3
 import threading
 import time
+from collections import deque
 
 import requests
 from sopel import plugin
@@ -85,6 +86,9 @@ def setup(bot):
 
 
 def shutdown(bot):
+    _sweeper_stop.set()
+    with _sweeper_cv:
+        _sweeper_cv.notify_all()
     LOG.info('harambe: shutting down')
 
 
@@ -100,9 +104,11 @@ _db_lock  = threading.Lock()
 _whois_pending: dict[str, dict] = {}
 _whois_lock = threading.Lock()
 
-# Pending CTCP VERSION replies: nick_lower → timer
-_ctcp_pending: dict[str, threading.Timer] = {}
+# Pending CTCP VERSION replies: nick_lower → monotonic deadline
+_ctcp_pending: dict[str, float] = {}
 _ctcp_lock = threading.Lock()
+_CTCP_TIMEOUT = 30
+_CTCP_MAX_PENDING = 1000
 
 # True once the server confirms oper with 381 RPL_YOUREOPER
 _is_oper = False
@@ -124,15 +130,19 @@ _global_enrichment: dict = {
     'next_report_percent': 20,
 }
 _global_enrichment_nicks: set = set()
-# Nicks queued for WHOIS when WHO replies give us hostnames but no IP.
-# Drained by a small pool of real worker threads (not a rate-limited timer):
-# an oper connection is immune to flood kicks, so the bottleneck is our own
-# throttling, not the server.
-_whois_queue: list = []
+# Outgoing probe queue: ("whois"|"version", nick).  Drained by ONE sweeper
+# thread at a fixed pace.  The server won't flood-kick an oper, but the ibot
+# core sends at ~1 line/s, so unpaced probes would queue ahead of (and
+# delay) every other plugin's output.  The deque is capped.
+_whois_queue: deque = deque()
+_whois_queued: set = set()          # ("whois"|"version", nick_lower) in queue
 _whois_queue_lock = threading.Lock()
-_WHOIS_WORKER_COUNT = 5
-_whois_workers_running = 0
-_whois_workers_lock = threading.Lock()
+_WHOIS_QUEUE_MAX = 50000
+_WHOIS_GAP = 1.5                    # seconds between probes
+_WHOIS_PENDING_MAX = 5000           # cap on in-flight WHOIS records
+_sweeper_cv = threading.Condition(_whois_queue_lock)
+_sweeper_stop = threading.Event()
+_sweeper_thread = None
 
 # Mass-join flood detection state
 _join_events: list = []            # list of (timestamp, host, nick, channel)
@@ -447,6 +457,10 @@ def _start_whois(bot, nick: str):
     """Issue a WHOIS for a nick and start collecting replies."""
     nick_lower = nick.lower()
     with _whois_lock:
+        if nick_lower not in _whois_pending and len(_whois_pending) >= _WHOIS_PENDING_MAX:
+            # Drop the oldest half of never-completed WHOIS records
+            for k in list(_whois_pending)[:_WHOIS_PENDING_MAX // 2]:
+                _whois_pending.pop(k, None)
         # Merge into any in-flight WHOIS for this nick instead of clobbering
         pending = _whois_pending.setdefault(nick_lower, {})
         pending['nick'] = nick
@@ -489,22 +503,19 @@ def _finalize_whois(bot, nick_lower: str):
 
 
 def _request_version(bot, nick: str):
-    """Send CTCP VERSION request and set a timeout to give up."""
+    """Queue a CTCP VERSION probe (sent by the paced sweeper)."""
+    _enqueue(bot, 'version', nick)
+
+
+def _send_version(bot, nick: str):
     nick_lower = nick.lower()
-
-    def _timeout():
-        with _ctcp_lock:
-            _ctcp_pending.pop(nick_lower, None)
-        LOG.debug('harambe: CTCP VERSION timeout for %s', nick)
-
-    timer = threading.Timer(30, _timeout)
+    now = time.monotonic()
     with _ctcp_lock:
-        old = _ctcp_pending.pop(nick_lower, None)
-        if old:
-            old.cancel()
-        _ctcp_pending[nick_lower] = timer
-
-    timer.start()
+        for k in [k for k, dl in _ctcp_pending.items() if dl < now]:
+            del _ctcp_pending[k]
+        if nick_lower not in _ctcp_pending and len(_ctcp_pending) >= _CTCP_MAX_PENDING:
+            return
+        _ctcp_pending[nick_lower] = now + _CTCP_TIMEOUT
     bot.write(['PRIVMSG', nick, '\x01VERSION\x01'])
 
 
@@ -518,51 +529,56 @@ def _cfg_int(bot, name: str, default: int) -> int:
 
 
 def _queue_whois(bot, nick: str):
-    """Queue a nick for WHOIS, then ensure worker threads are running to drain it.
+    """Queue a nick for WHOIS (sent by the paced sweeper thread)."""
+    _enqueue(bot, 'whois', nick)
 
-    Draining uses a small pool of real threads rather than one-at-a-time rate
-    limiting: an oper connection is immune to flood kicks, so we gather info
-    as fast as the queue allows instead of throttling ourselves.
-    """
+
+def _enqueue(bot, kind: str, nick: str):
     if not nick:
-        return
+        return False
+    key = (kind, nick.lower())
     with _whois_queue_lock:
-        if nick.lower() not in [n.lower() for n in _whois_queue]:
-            _whois_queue.append(nick)
-    _ensure_whois_workers(bot)
+        if key in _whois_queued:
+            return True
+        if len(_whois_queue) >= _WHOIS_QUEUE_MAX:
+            LOG.debug('harambe: probe queue full, dropping %s %s', kind, nick)
+            return False
+        _whois_queue.append((kind, nick))
+        _whois_queued.add(key)
+        _sweeper_cv.notify()
+    _ensure_sweeper(bot)
+    return True
 
 
-def _ensure_whois_workers(bot):
-    global _whois_workers_running
-    with _whois_workers_lock:
-        needed = min(_WHOIS_WORKER_COUNT, len(_whois_queue)) - _whois_workers_running
-        for _ in range(max(0, needed)):
-            _whois_workers_running += 1
-            t = threading.Thread(target=_whois_worker, args=(bot,), daemon=True)
-            t.start()
+def _ensure_sweeper(bot):
+    global _sweeper_thread
+    with _whois_queue_lock:
+        if _sweeper_thread is not None and _sweeper_thread.is_alive():
+            return
+        _sweeper_stop.clear()
+        _sweeper_thread = threading.Thread(
+            target=_sweeper, args=(bot,), daemon=True, name='harambe-sweeper')
+        _sweeper_thread.start()
 
 
-def _whois_worker(bot):
-    """Pop nicks off the queue and WHOIS them back-to-back until it's empty."""
-    global _whois_workers_running
-    try:
-        while True:
-            with _whois_queue_lock:
-                nick = _whois_queue.pop(0) if _whois_queue else None
-            if nick is None:
-                with _whois_workers_lock:
-                    # Double-check queue under lock before decrementing and exiting
-                    with _whois_queue_lock:
-                        if _whois_queue:
-                            continue
-                    _whois_workers_running -= 1
-                    return
-            _start_whois(bot, nick)
-            time.sleep(0.1)  # small spacing so replies don't arrive in one burst
-    except Exception:
-        with _whois_workers_lock:
-            _whois_workers_running -= 1
-        raise
+def _sweeper(bot):
+    """Single paced worker: WHOIS / VERSION probes, one every _WHOIS_GAP s."""
+    while not _sweeper_stop.is_set():
+        with _whois_queue_lock:
+            while not _whois_queue and not _sweeper_stop.is_set():
+                _sweeper_cv.wait(timeout=30)
+            if _sweeper_stop.is_set():
+                return
+            kind, nick = _whois_queue.popleft()
+            _whois_queued.discard((kind, nick.lower()))
+        try:
+            if kind == 'version':
+                _send_version(bot, nick)
+            else:
+                _start_whois(bot, nick)
+        except Exception:
+            LOG.exception('harambe: probe %s %s failed', kind, nick)
+        _sweeper_stop.wait(_WHOIS_GAP)
 
 
 def _sweep_channels(bot):
@@ -694,7 +710,7 @@ def on_join(bot, trigger):
     collect = (bot.config.harambe.collect_channels or 'all').strip().lower()
     if collect not in ('all', '*') and channel.lower() != collect:
         return
-    _start_whois(bot, nick)
+    _queue_whois(bot, nick)
 
 
 @plugin.event('001')  # RPL_WELCOME — we connected
@@ -1023,9 +1039,7 @@ def ctcp_version_reply(bot, trigger):
 
     nick_lower = str(trigger.nick).lower()
     with _ctcp_lock:
-        timer = _ctcp_pending.pop(nick_lower, None)
-    if timer:
-        timer.cancel()
+        _ctcp_pending.pop(nick_lower, None)
 
     _upsert_user({'nick': str(trigger.nick), 'version': version})
     LOG.debug('harambe: VERSION from %s: %s', trigger.nick, version)
@@ -1066,7 +1080,7 @@ def on_nick_change(bot, trigger):
         _upsert_user(data)
 
     if _is_oper:
-        _start_whois(bot, new_nick)
+        _queue_whois(bot, new_nick)
 
 
 # ── NickServ notice parser ────────────────────────────────────────────

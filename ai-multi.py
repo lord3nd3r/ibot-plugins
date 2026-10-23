@@ -3111,6 +3111,32 @@ def _format_duration_short(seconds):
     return " ".join(parts) if parts else "0s"
 
 
+# Reminder caps / delivery throttle
+REMINDER_MAX_PER_USER = 10        # pending reminders per nick
+REMINDER_MAX_PER_CHANNEL = 50     # pending reminders targeting one channel
+REMINDER_MAX_LEN = 300            # characters per reminder message
+REMINDER_DELIVER_BATCH = 10       # reminders delivered per worker pass
+REMINDER_DELIVER_GAP = 1.0        # seconds between delivered reminders
+REMINDER_LIST_MAX = 5             # reminders shown by $remind list
+
+
+def _db_count_pending_reminders(bot, nick=None, channel=None):
+    try:
+        with _DBContext(bot) as conn:
+            c = conn.cursor()
+            if nick is not None:
+                c.execute("SELECT COUNT(*) FROM grok_reminders WHERE nick = ? AND status = 'pending'",
+                          (nick.lower(),))
+            else:
+                c.execute("SELECT COUNT(*) FROM grok_reminders WHERE channel = ? COLLATE NOCASE "
+                          "AND status = 'pending'", (channel,))
+            row = c.fetchone()
+            return int(row[0]) if row else 0
+    except Exception:
+        _log(bot).exception('Failed to count reminders')
+        return 0
+
+
 def _db_add_reminder(bot, nick, channel, message, remind_at):
     try:
         with _DBContext(bot) as conn:
@@ -3135,8 +3161,8 @@ def _db_get_due_reminders(bot):
                 '''SELECT id, nick, channel, message, remind_at, created_at
                    FROM grok_reminders
                    WHERE status = 'pending' AND remind_at <= ?
-                   ORDER BY remind_at ASC''',
-                (now,)
+                   ORDER BY remind_at ASC LIMIT ?''',
+                (now, REMINDER_DELIVER_BATCH)
             )
             rows = c.fetchall()
             reminders = []
@@ -3213,7 +3239,11 @@ def _reminders_worker_loop(bot, stop_event):
     while not stop_event.is_set():
         try:
             due = _db_get_due_reminders(bot)
-            for rem in due:
+            for i, rem in enumerate(due):
+                if stop_event.is_set():
+                    break
+                if i:
+                    time.sleep(REMINDER_DELIVER_GAP)
                 rem_id = rem['id']
                 nick = rem['nick']
                 channel = rem['channel']
@@ -6767,6 +6797,7 @@ def badmin(bot, trigger):
     bot.reply('Usage: $badmin <add|del|list> [#channel] [nick]')
 
 @plugin.command('remind')
+@plugin.rate(user=3)
 def remind(bot, trigger):
     """Set a timed reminder, or list/cancel active reminders.
     Usage:
@@ -6792,12 +6823,16 @@ def remind(bot, trigger):
         
         now = time.time()
         lines = []
-        for r in reminders:
+        for r in reminders[:REMINDER_LIST_MAX]:
             remain = r['remind_at'] - now
             time_str = _format_duration_short(max(0, remain))
-            lines.append(f"[{r['id']}] in {time_str}: \"{r['message']}\"")
-        
-        bot.reply(f'Your active reminders: {" | ".join(lines)}')
+            m = r['message']
+            if len(m) > 60:
+                m = m[:57] + '...'
+            lines.append(f"[{r['id']}] in {time_str}: \"{m}\"")
+        extra = len(reminders) - REMINDER_LIST_MAX
+        more = f' (+{extra} more)' if extra > 0 else ''
+        bot.reply(f'Your active reminders: {" | ".join(lines)}{more}')
         return
     
     # Handle $remind del <id> or $remind cancel <id>
@@ -6849,9 +6884,21 @@ def remind(bot, trigger):
     if not message:
         bot.reply('Usage: $remind <duration> <message>')
         return
+    if len(message) > REMINDER_MAX_LEN:
+        bot.reply(f'Reminder message too long (max {REMINDER_MAX_LEN} characters).')
+        return
     
     remind_at = time.time() + seconds
     channel = trigger.sender
+
+    if _db_count_pending_reminders(bot, nick=trigger.nick) >= REMINDER_MAX_PER_USER:
+        bot.reply(f'You already have {REMINDER_MAX_PER_USER} pending reminders. '
+                  'Cancel one with $remind del <id> first.')
+        return
+    if str(channel).startswith('#') and \
+            _db_count_pending_reminders(bot, channel=str(channel)) >= REMINDER_MAX_PER_CHANNEL:
+        bot.reply('This channel has too many pending reminders right now.')
+        return
     
     rem_id = _db_add_reminder(bot, trigger.nick, channel, message, remind_at)
     if rem_id:
@@ -6935,19 +6982,29 @@ def ai_toggle(bot, trigger):
 
 # ==================== USER PROFILE COMMANDS ====================
 
+PROFILE_MAX_FACT_LINES = 10
+
+
 @plugin.command('profile')
+@plugin.rate(user=5)
 def profile_view(bot, trigger):
-    """View a user's profile. Usage: .profile <nick>"""
+    """View a profile (sent to you by PM). Usage: $profile [nick]
+    Anyone may view their own profile; viewing someone else's needs bot admin."""
     args = (trigger.group(2) or '').strip()
-    if not args:
-        bot.reply("Usage: .profile <nick>")
+    target_nick = args.split()[0] if args else str(trigger.nick)
+
+    if target_nick.lower() != trigger.nick.lower() and not _is_admin(bot, trigger):
+        bot.reply("You can only view your own profile ($profile).")
         return
-    
-    target_nick = args.split()[0]
+
+    dest = trigger.nick
+    if not _is_pm(trigger):
+        bot.reply("Sent you the profile by PM.")
+
     profile = _db_get_user_profile(bot, target_nick)
     
     if not profile:
-        bot.say(f"No profile found for {target_nick}.")
+        bot.say(f"No profile found for {target_nick}.", dest)
         return
     
     parts = []
@@ -6959,15 +7016,17 @@ def profile_view(bot, trigger):
         parts.append(f"Weather: {profile['weather_location']}")
     
     if parts:
-        bot.say(f"Profile for {target_nick} — {' | '.join(parts)}")
+        bot.say(f"Profile for {target_nick} — {' | '.join(parts)}", dest)
     
     facts = profile.get('facts', [])
     if facts:
-        for i, fact in enumerate(facts):
-            bot.say(f"  [{i}] {fact}")
+        for i, fact in enumerate(facts[:PROFILE_MAX_FACT_LINES]):
+            bot.say(f"  [{i}] {fact}", dest)
+        if len(facts) > PROFILE_MAX_FACT_LINES:
+            bot.say(f"  ... and {len(facts) - PROFILE_MAX_FACT_LINES} more fact(s) not shown.", dest)
     
     if not parts and not facts:
-        bot.say(f"Profile for {target_nick} exists but is empty.")
+        bot.say(f"Profile for {target_nick} exists but is empty.", dest)
 
 @plugin.command('setprofile')
 def profile_set_field(bot, trigger):

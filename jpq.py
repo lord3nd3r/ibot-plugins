@@ -76,6 +76,7 @@ def setup(bot):
     bot.memory['jpq_stats'] = []            # list of recent action dicts
     bot.memory['jpq_recent_kicks'] = {}     # (channel, hostmask) -> timestamp of kick
     bot.memory['jpq_staff'] = {}            # channel_lower -> set of nicks at +h or above
+    _restore_unbans(bot)
     LOGGER.info("JPQ flood protection initialized")
 
 
@@ -350,6 +351,53 @@ def _can_announce(bot, channel):
     return True
 
 
+# --- Persisted temp-ban expiries (survive restarts) -------------------
+# Stored in the bot DB as plugin value (jpq, 'pending_unbans'):
+#   {"<chan_lower> <banmask>": {"channel", "mask", "expires", "extra"}}
+_UNBAN_DB_KEY = 'pending_unbans'
+_unban_persist_lock = threading.Lock()
+_RESTORE_MIN_DELAY = 60   # overdue unbans run this long after startup
+                          # (gives the bot time to reconnect and get ops)
+
+
+def _persist_unban(bot, channel, banmask, expires, extra=None):
+    """Record (expires=epoch) or forget (expires=None) a pending unban."""
+    k = f"{str(channel).lower()} {banmask}"
+    try:
+        with _unban_persist_lock:
+            data = bot.db.get_plugin_value('jpq', _UNBAN_DB_KEY) or {}
+            if expires is None:
+                if k not in data:
+                    return
+                data.pop(k, None)
+            else:
+                data[k] = {'channel': str(channel), 'mask': banmask,
+                           'expires': float(expires), 'extra': extra}
+            bot.db.set_plugin_value('jpq', _UNBAN_DB_KEY, data)
+    except Exception:
+        LOGGER.exception("JPQ: failed to persist pending unban")
+
+
+def _restore_unbans(bot):
+    """Reschedule unbans saved by a previous run."""
+    try:
+        with _unban_persist_lock:
+            data = bot.db.get_plugin_value('jpq', _UNBAN_DB_KEY) or {}
+    except Exception:
+        LOGGER.exception("JPQ: failed to load pending unbans")
+        return
+    now = time.time()
+    for entry in list(data.values()):
+        try:
+            delay = max(_RESTORE_MIN_DELAY, float(entry['expires']) - now)
+            _schedule_unban(bot, entry['channel'], entry['mask'], delay)
+        except Exception:
+            LOGGER.exception("JPQ: bad pending unban entry")
+    if data:
+        LOGGER.info("JPQ: restored %d pending unban(s)", len(data))
+
+
+
 def _schedule_unban(bot, channel, banmask, duration):
     """Schedule an automatic unban after duration seconds."""
     if duration <= 0:
@@ -365,12 +413,14 @@ def _schedule_unban(bot, channel, banmask, duration):
     def _do_unban():
         bot.write(['MODE', channel, '-b', banmask])
         bot.memory['jpq_pending_unbans'].pop(key, None)
+        _persist_unban(bot, channel, banmask, None)
         LOGGER.info("JPQ: Auto-unbanned %s in %s", banmask, channel)
 
     timer = threading.Timer(duration, _do_unban)
     timer.daemon = True
     timer.start()
     bot.memory['jpq_pending_unbans'][key] = timer
+    _persist_unban(bot, channel, banmask, time.time() + duration, None)
 
 
 def _log_action(bot, nick, channel, banmask, count, window):

@@ -4,9 +4,12 @@ Serves up random beers, shots, whiskeys, cocktails, and pizza.
 Uses unified bot.db for persistence (same as mug.py).
 Deducts from mug game coins instead of maintaining separate balance.
 """
+import functools
 import random
+import sys
 import time
 import logging
+from contextlib import contextmanager
 import atexit
 import threading
 import unicodedata
@@ -76,8 +79,68 @@ def _to_1337(text):
 
 
 
+# ---------------------------------------------------------------------------
+# Mug-game coin storage
+#
+# Balances belong to mug.py, which keeps them in an in-memory cache and saves
+# that cache to bot.db.  Writing bot.db directly from here (as this plugin used
+# to) raced with mug.py: either side could overwrite the other's update.  When
+# mug.py is loaded we now read/write ITS live data under ITS lock (mug is the
+# single owner); only when mug.py isn't loaded do we fall back to bot.db.
+# ---------------------------------------------------------------------------
+
+_MUG_MODULE_NAMES = ('ibot_plugins.mug', 'sopel_modules.mug', 'scripts.mug', 'mug')
+_MUG_FALLBACK_LOCK = threading.RLock()
+_mug_tls = threading.local()
+
+
+def _mug_module():
+    for name in _MUG_MODULE_NAMES:
+        mod = sys.modules.get(name)
+        if (mod is not None and hasattr(mod, '_data_lock')
+                and hasattr(mod, '_load_data') and hasattr(mod, '_save_data')):
+            return mod
+    return None
+
+
+@contextmanager
+def _mug_txn(bot):
+    """Hold the coin lock for a read-modify-write.  Saves requested through
+    _save_mug_data() inside the block are deferred until the lock is released
+    (mug's saver has slow side effects: topic updates and voice sweeps)."""
+    mod = _mug_module()
+    lock = mod._data_lock if mod is not None else _MUG_FALLBACK_LOCK
+    depth = getattr(_mug_tls, 'depth', 0)
+    with lock:
+        _mug_tls.depth = depth + 1
+        if depth == 0:
+            _mug_tls.dirty = False
+        try:
+            yield
+        finally:
+            _mug_tls.depth = depth
+    if depth == 0 and getattr(_mug_tls, 'dirty', False):
+        _mug_tls.dirty = False
+        if mod is not None:
+            try:
+                mod._save_data(bot)
+            except Exception:
+                LOG.exception('beer: mug save failed')
+
+
+def _mug_locked(func):
+    @functools.wraps(func)
+    def wrapper(bot, *args, **kwargs):
+        with _mug_txn(bot):
+            return func(bot, *args, **kwargs)
+    return wrapper
+
+
 def _load_mug_data(bot):
-    """Load mug game data from bot.db."""
+    """Return the mug game data dict (mug.py's live copy when loaded)."""
+    mod = _mug_module()
+    if mod is not None:
+        return mod._load_data(bot)
     try:
         data = bot.db.get_plugin_value(MUG_GAME_PLUGIN, 'data')
         if isinstance(data, dict):
@@ -88,7 +151,19 @@ def _load_mug_data(bot):
 
 
 def _save_mug_data(bot, data):
-    """Save mug game data to bot.db atomically."""
+    """Persist mug game data.  With mug.py loaded this delegates to mug's own
+    saver (deferred until the surrounding _mug_txn releases the lock)."""
+    mod = _mug_module()
+    if mod is not None:
+        if getattr(_mug_tls, 'depth', 0) > 0:
+            _mug_tls.dirty = True
+            return True
+        try:
+            mod._save_data(bot)
+        except Exception as e:
+            LOG.error(f"ERROR saving mug game data via mug.py: {e}")
+            return False
+        return True
     try:
         bot.db.set_plugin_value(MUG_GAME_PLUGIN, 'data', data)
     except (AttributeError, TypeError, ValueError) as e:
@@ -123,6 +198,7 @@ def _save_tip_data(bot, data):
     return True
 
 
+@_mug_locked
 def _get_user_coins(bot, user):
     """Get user's current mug game coin balance."""
     data = _load_mug_data(bot)
@@ -165,6 +241,7 @@ def _touch_mug_user(data, user, current_time):
     return user_rec, False, False
 
 
+@_mug_locked
 def _deduct_mug_coins(bot, user, amount):
     """Deduct coins from user's mug game balance.
     Returns (new_balance, success, was_new_user, got_daily_bonus) where:
@@ -675,9 +752,11 @@ def _serve_item(bot, trigger, item_type, item_list, message_list, placeholder_ke
         # Send balance update via PM
         if price > 0:
             if was_new_user:
-                bot.notice(f"Welcome to the bar! 🍺 You received {NEW_USER_STARTING_COINS} starting coins.\nPaid {price} coins - Remaining balance: {new_balance} coins 🪙", trigger.nick)
+                bot.notice(f"Welcome to the bar! 🍺 You received {NEW_USER_STARTING_COINS} starting coins.", trigger.nick)
+                bot.notice(f"Paid {price} coins - Remaining balance: {new_balance} coins 🪙", trigger.nick)
             elif got_daily_bonus:
-                bot.notice(f"Daily bonus! +{DAILY_BONUS_COINS} coins 💰\nPaid {price} coins - Remaining balance: {new_balance} coins 🪙", trigger.nick)
+                bot.notice(f"Daily bonus! +{DAILY_BONUS_COINS} coins 💰", trigger.nick)
+                bot.notice(f"Paid {price} coins - Remaining balance: {new_balance} coins 🪙", trigger.nick)
             else:
                 bot.notice(f"Paid {price} coins - Remaining balance: {new_balance} coins 🪙", trigger.nick)
     
@@ -2566,35 +2645,36 @@ def tip_user(bot, trigger):
         return
 
     # Tips come out of mug game coins - the same balance drinks are bought with
-    data = _load_mug_data(bot)
-    users = data.get('users', {})
+    with _mug_txn(bot):
+        data = _load_mug_data(bot)
+        users = data.get('users', {})
 
-    if tipper_key not in users or not isinstance(users[tipper_key], dict):
-        bot.say(f"{tipper_display}: You need to buy something from the bar first to open a tab!")
-        return
+        if tipper_key not in users or not isinstance(users[tipper_key], dict):
+            bot.say(f"{tipper_display}: You need to buy something from the bar first to open a tab!")
+            return
 
-    tipper_rec = users[tipper_key]
-    balance = int(tipper_rec.get('money', 0))
+        tipper_rec = users[tipper_key]
+        balance = int(tipper_rec.get('money', 0))
 
-    # Check if tipper has enough balance
-    if balance < amount:
-        bot.notice(f"You don't have enough! Balance: {balance} coins", tipper_display)
-        return
+        # Check if tipper has enough balance
+        if balance < amount:
+            bot.notice(f"You don't have enough! Balance: {balance} coins", tipper_display)
+            return
 
-    recipient_rec, _, _ = _touch_mug_user(data, recipient, time.time())
+        recipient_rec, _, _ = _touch_mug_user(data, recipient, time.time())
 
-    # Transfer the coins
-    tipper_rec['money'] = balance - amount
-    recipient_rec['money'] = int(recipient_rec.get('money', 0)) + amount
+        # Transfer the coins
+        tipper_rec['money'] = balance - amount
+        recipient_rec['money'] = int(recipient_rec.get('money', 0)) + amount
 
-    if not _save_mug_data(bot, data):
-        bot.say(f"{tipper_display}: Something went wrong saving the tip. Sorry!")
-        return
+        if not _save_mug_data(bot, data):
+            bot.say(f"{tipper_display}: Something went wrong saving the tip. Sorry!")
+            return
 
-    # Track the tip leaderboard
-    tips = _load_tip_data(bot)
-    tips['tips_received'][recipient_key] = tips['tips_received'].get(recipient_key, 0) + amount
-    _save_tip_data(bot, tips)
+        # Track the tip leaderboard
+        tips = _load_tip_data(bot)
+        tips['tips_received'][recipient_key] = tips['tips_received'].get(recipient_key, 0) + amount
+        _save_tip_data(bot, tips)
 
     bot.say(f"{tipper_display} tips {recipient} {amount} coins! 💰✨")
     bot.notice(f"New balance: {tipper_rec['money']} coins 🪙", tipper_display)
@@ -2608,10 +2688,11 @@ def barcash(bot, trigger):
     user = str(trigger.account or trigger.nick)
     user_display = trigger.nick
 
-    data = _load_mug_data(bot)
-    user_rec, was_new, got_daily = _touch_mug_user(data, user, time.time())
-    if was_new or got_daily:
-        _save_mug_data(bot, data)
+    with _mug_txn(bot):
+        data = _load_mug_data(bot)
+        user_rec, was_new, got_daily = _touch_mug_user(data, user, time.time())
+        if was_new or got_daily:
+            _save_mug_data(bot, data)
 
     balance = int(user_rec.get('money', 0))
     if was_new:
@@ -2700,19 +2781,20 @@ def adjbal(bot, trigger):
         bot.reply('Amount must be an integer like +100 or -50.')
         return
 
-    data = _load_mug_data(bot)
-    user_rec, _, _ = _touch_mug_user(data, nick, time.time())
+    with _mug_txn(bot):
+        data = _load_mug_data(bot)
+        user_rec, _, _ = _touch_mug_user(data, nick, time.time())
 
-    old = int(user_rec.get('money', 0))
-    new = old + amt
-    if new < 0:
-        bot.reply(f'Operation would make {nick}\'s balance negative ({new}). Operation cancelled.')
-        return
+        old = int(user_rec.get('money', 0))
+        new = old + amt
+        if new < 0:
+            bot.reply(f'Operation would make {nick}\'s balance negative ({new}). Operation cancelled.')
+            return
 
-    user_rec['money'] = new
-    _save_mug_data(bot, data)
+        user_rec['money'] = new
+        _save_mug_data(bot, data)
 
-    bot.reply(f"Adjusted {nick}'s balance: {old} -> {new} coins")
+        bot.reply(f"Adjusted {nick}'s balance: {old} -> {new} coins")
 
 
 
@@ -2764,42 +2846,43 @@ def barreset(bot, trigger):
     parts = trigger.group(2).strip().split()
     target = parts[0]
 
-    data = _load_mug_data(bot)
-    tips = _load_tip_data(bot)
-    now = time.time()
+    with _mug_txn(bot):
+        data = _load_mug_data(bot)
+        tips = _load_tip_data(bot)
+        now = time.time()
 
-    if target.lower() == 'all':
-        # require explicit confirmation to prevent accidents
-        if len(parts) < 2 or parts[1].lower() != 'confirm':
-            bot.reply('To reset ALL balances, PM me: $barreset all confirm')
+        if target.lower() == 'all':
+            # require explicit confirmation to prevent accidents
+            if len(parts) < 2 or parts[1].lower() != 'confirm':
+                bot.reply('To reset ALL balances, PM me: $barreset all confirm')
+                return
+
+            # Reset everything
+            for rec in data.get('users', {}).values():
+                if isinstance(rec, dict):
+                    rec['money'] = NEW_USER_STARTING_COINS
+                    rec['last_bar_credit'] = now
+            tips['tips_received'] = {}
+
+            _save_mug_data(bot, data)
+            _save_tip_data(bot, tips)
+            bot.reply(f'All balances reset to {NEW_USER_STARTING_COINS} coins and all tips cleared.')
             return
 
-        # Reset everything
-        for rec in data.get('users', {}).values():
-            if isinstance(rec, dict):
-                rec['money'] = NEW_USER_STARTING_COINS
-                rec['last_bar_credit'] = now
-        tips['tips_received'] = {}
+        # Single user reset
+        nick = target
+        nick_key = _user_key(nick)
+        user_rec, was_new, _ = _touch_mug_user(data, nick, now)
+        user_rec['money'] = NEW_USER_STARTING_COINS
+        user_rec['last_bar_credit'] = now
+        tips['tips_received'].pop(nick_key, None)
 
         _save_mug_data(bot, data)
         _save_tip_data(bot, tips)
-        bot.reply(f'All balances reset to {NEW_USER_STARTING_COINS} coins and all tips cleared.')
-        return
-
-    # Single user reset
-    nick = target
-    nick_key = _user_key(nick)
-    user_rec, was_new, _ = _touch_mug_user(data, nick, now)
-    user_rec['money'] = NEW_USER_STARTING_COINS
-    user_rec['last_bar_credit'] = now
-    tips['tips_received'].pop(nick_key, None)
-
-    _save_mug_data(bot, data)
-    _save_tip_data(bot, tips)
-    if was_new:
-        bot.reply(f"{nick} did not have an account; initialized to {NEW_USER_STARTING_COINS} coins.")
-    else:
-        bot.reply(f"Reset {nick}'s balance to {NEW_USER_STARTING_COINS} coins and cleared tips.")
+        if was_new:
+            bot.reply(f"{nick} did not have an account; initialized to {NEW_USER_STARTING_COINS} coins.")
+        else:
+            bot.reply(f"Reset {nick}'s balance to {NEW_USER_STARTING_COINS} coins and cleared tips.")
 
 
 def _cleanup():

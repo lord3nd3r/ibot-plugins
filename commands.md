@@ -12,7 +12,7 @@ The bot command prefix is **`$`** unless noted otherwise.
 | [🍺 Bartender](docs/beer.md) | Virtual bar with drinks, tips, and a unified coin economy |
 | [🌿 Weed & Trippy](docs/weed.md) | Themed smoke/trip messages with countdown animations |
 | [💰 Coins & Mugging](docs/mug.md) | IRC economy — coins, mugging, bounties, shop, gambling |
-| [🛠️ Bot Admin](docs/botadmin.md) | Owner/admin bot management commands |
+| [🛠️ Bot Admin](docs/botadmin.md) | `$restart`, `$breload`, `$bothelp` (other admin commands are in the ibot core) |
 | [🔍 IRC Oper Scanner](docs/operscan.md) | PM-only scanner to identify network/server IRC operators |
 | [🐄 Moo Counter](docs/moo.md) | Say moo to increment your counter, network leaderboards |
 | [⭐ Karma](docs/karma.md) | Inline `++` / `--` karma with per-channel & global tracking |
@@ -42,3 +42,5 @@ The bot command prefix is **`$`** unless noted otherwise.
 | [📬 Tell](docs/tell.md) | Leave offline messages for users, delivered when they next speak (`$tell`) |
 | [👁️ Seen](docs/seen.md) | Report when a user was last seen in the channel |
 | [🌲 Hunting Game](docs/hunt.md) | Wildlife hunting game with guns, permits, ammo, and steady aim mechanics |
+| [ᓚᘏᗢ Cat](docs/cat.md) | Print a random unicode cat (`$cat`) |
+| [📋 Help Link](docs/commands.md) | `$help` / `$commands` / `$cmds` link to this page |

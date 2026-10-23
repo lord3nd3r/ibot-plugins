@@ -45,10 +45,11 @@ Each time the same trigram appears, its frequency increases — making common ph
 
 **2. No config file changes needed.** Trigram data is stored in its own SQLite database at `~/.sopel/markov.db` (created automatically on first load). Channel settings (enabled, chance) use Sopel's built-in `bot.db`.
 
-**3. Load the plugin:**
+**3. Load the plugin** (bot owner):
 ```
-$breload markov
+$reload markov
 ```
+(`$breload markov` also works.)
 
 **4. Enable it in a channel** (requires channel op):
 ```
@@ -66,7 +67,7 @@ $markovon
 | `$markovoff` | Disable Markov entirely (stops learning and auto-trigger) |
 | `$markovchance <0-100>` | Set the auto-trigger percentage (0 = off, 100 = every message) |
 | `$clearmarkov` | Wipe the entire Markov brain for this channel (channel owner only) |
-| `$markovlog <url>` | Bulk-import a plain text log to bootstrap the brain (channel op) |
+| `$markovlog <url>` | Bulk-import a plain text log to bootstrap the brain (**bot admin only**) |
 
 ### Examples
 
@@ -97,10 +98,11 @@ $markovon
 **Import a chat log to seed the brain:**
 ```
 <@End3r> $markovlog https://example.com/chatlog.txt
-<+glitchy> Importing...
+<+glitchy> End3r: Fetching log...
+<+glitchy> Imported 1234 lines.
 ```
 
-> **Note:** The log URL must be `http://` or `https://`. The file should be plain text with one message per line. URLs in the log are automatically skipped during import.
+> **Note:** `$markovlog` is restricted to bot admins and must be used in a channel that has Markov enabled. The log URL must be `http://` or `https://` on a public host — private, loopback and internal addresses are refused, including via redirects. Logs over **5 MB** are refused, and the download has a 60-second limit. Only one import runs at a time. The file should be plain text with one message per line. URLs in the log are automatically skipped during import. Failures show a short message (e.g. `Failed to fetch log (HTTP 404).`); details go to the bot log only.
 
 ---
 
@@ -133,7 +135,7 @@ $markovon
 <+glitchy> computers are just rocks we tricked into thinking
 ```
 
-> **Note:** For `$markovfor`, you must be in the target channel if sending the command via PM.
+> **Note:** For `$markovfor`, you must be in the target channel (whether you ask in PM or in a channel). If you ask from a *different* channel, the result is sent to you by private message as `[#chan] sentence` so one channel's chat isn't replayed in another.
 
 ---
 
@@ -160,6 +162,17 @@ All trigram data is stored in a separate SQLite database at `~/.sopel/markov.db`
 | `frequency` | INTEGER | How many times this trigram has been seen |
 
 The primary key is `(channel, first_word, second_word, third_word)` — so each unique trigram per channel is stored exactly once with a running count.
+
+### Optional size cap (off by default)
+
+The database grows forever unless you set a cap in the bot config:
+
+```ini
+[markov]
+max_rows_per_channel = 2000000
+```
+
+When this is above 0, an hourly job deletes the lowest-frequency trigrams from any channel over the cap, at most 20,000 rows per channel per run. With the default (`0`/unset) nothing is ever deleted.
 
 ---
 

@@ -29,7 +29,7 @@ All plugins have detailed documentation, command references, and setup instructi
 |--------|-------------|------|
 | **mug** | IRC economy game with coins, mugging, bounties, casino games (dice, slots, roulette, blackjack, hold'em), & item shop | [docs/mug.md](docs/mug.md) |
 | **beer** | Virtual bartender with drinks, tipping, and shared coin economy | [docs/beer.md](docs/beer.md) |
-| **hunt** | Wildlife hunting game with guns, ammo, steady aim mechanics, permits, and bounties | [docs/hunt.md](docs/hunt.md) |
+| **hunt** | Wildlife hunting game with guns, ammo, steady aim mechanics, permits, and loot (uses mug coins when mug is loaded) | [docs/hunt.md](docs/hunt.md) |
 | **trivia** | Multi-player trivia game with categories, progressive hints, streaks, and persistent stats | [docs/trivia.md](docs/trivia.md) |
 | **weed** | Smoke & trippy sessions with countdown animations and 15 substances | [docs/weed.md](docs/weed.md) |
 | **moo** | Moo counter with legendary moos, power moos (`sudo moo`), and leaderboards | [docs/moo.md](docs/moo.md) |
@@ -39,7 +39,7 @@ All plugins have detailed documentation, command references, and setup instructi
 
 | Plugin | Description | Docs |
 |--------|-------------|------|
-| **botadmin** | Bot owner and admin management commands (`$restart`, `$breload`, `$raw`, `$say`, `$bjoin`, etc.) | [docs/botadmin.md](docs/botadmin.md) |
+| **botadmin** | `$restart`, `$breload` and `$bothelp` (`$raw`, `$say`, `$bjoin`, `$rehash`, etc. come from the ibot core admin plugin) | [docs/botadmin.md](docs/botadmin.md) |
 | **opme** | Channel self-promotion command for authorized users (`$promoteme`) | [docs/opme.md](docs/opme.md) |
 | **autoop** | Automatic mode granting (`+o`, `+h`, `+v`) on join for configured users | [docs/autoop.md](docs/autoop.md) |
 | **autovoice** | Activity-based auto-voicing (`+v`) after 50 messages (adjustable per channel), with idle voice removal | [docs/autovoice.md](docs/autovoice.md) |
@@ -71,6 +71,8 @@ All plugins have detailed documentation, command references, and setup instructi
 | **facepalm** | Auto-reaction to `/me facepalms` and `$shrug` output | [docs/facepalm.md](docs/facepalm.md) |
 | **tableflip** | 4-step table flip ASCII animation sequence (`$flip`) | [docs/tableflip.md](docs/tableflip.md) |
 | **fix** | Sed-style typo correction (`s/find/replace/`) | [docs/fix.md](docs/fix.md) |
+| **cat** | Random unicode cat (`$cat`) | [docs/cat.md](docs/cat.md) |
+| **commands** | `$help` / `$commands` / `$cmds` link to the command reference | [docs/commands.md](docs/commands.md) |
 
 ---
 
@@ -78,8 +80,10 @@ All plugins have detailed documentation, command references, and setup instructi
 
 Non-plugin helper tools included in the repository:
 
-- **`cli_trivia.py`**: Command-line interactive trivia runner for testing outside IRC (`python3 cli_trivia.py -i`).
-- **`demo_trivia.py`**: Demo script testing progressive hint generation, categories, and question loading.
+(Files whose names start with `_` are skipped by the ibot plugin loader, so these never load as plugins.)
+
+- **`_cli_trivia.py`**: Command-line interactive trivia runner for testing outside IRC (`python3 _cli_trivia.py -i`).
+- **`_demo_trivia.py`**: Demo script testing progressive hint generation, categories, and question loading.
 
 ---
 

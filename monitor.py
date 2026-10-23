@@ -15,7 +15,7 @@ from sopel import plugin
 LOGGER = logging.getLogger(__name__)
 
 # ========================= CONFIG =========================
-SAVE_EVERY_EVENTS = 20      # flush idle-prune after this many events
+SAVE_EVERY_EVENTS = 20      # (unused; idle-prune now runs on the interval below only)
 SAVE_EVERY_MINUTES = 10     # also prune on this interval
 IDLE_DAYS = 30              # discard nicks unseen for this long
 IGNORE_GUESTS = True        # skip guestXXXX nicks
@@ -32,6 +32,18 @@ VALID_FIELDS = frozenset({
 
 _stats_lock = threading.Lock()
 
+# One shared write connection (sqlite3 objects aren't thread-safe on their
+# own, so every use holds _write_lock).  Read-only commands keep using
+# short-lived connections from _get_db().
+_write_lock = threading.Lock()
+_write_conn = None
+
+# Our own view of channel membership: nick_lower -> set(channel_lower).
+# The ibot core updates bot.channels *before* dispatching QUIT/NICK, so by
+# the time our handler runs the user is already gone from bot.channels.
+_members = {}
+_members_lock = threading.Lock()
+
 
 # ====================== DB HELPERS ======================
 
@@ -40,6 +52,7 @@ def setup(bot):
     db_path = os.path.join(db_dir, "chanstats.db")
     bot.memory["chanstats_db"] = db_path
     bot.memory["chanstats_count"] = 0
+    _resync_members(bot)
 
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -73,64 +86,131 @@ def _get_db(bot):
     return conn
 
 
+def _writer(bot):
+    """Shared write connection; caller must hold _write_lock."""
+    global _write_conn
+    if _write_conn is None:
+        _write_conn = sqlite3.connect(bot.memory["chanstats_db"], check_same_thread=False)
+        _write_conn.execute("PRAGMA journal_mode=WAL")
+        _write_conn.execute("PRAGMA synchronous=NORMAL")
+    return _write_conn
+
+
+def _close_writer():
+    global _write_conn
+    with _write_lock:
+        if _write_conn is not None:
+            try:
+                _write_conn.close()
+            except Exception:
+                pass
+            _write_conn = None
+
+
 def accrue(bot, nick, channel, field, amount=1):
     """Increment a stat field for nick in channel."""
-    if field not in VALID_FIELDS:
-        return
-    if amount <= 0:
+    accrue_many(bot, nick, [channel], {field: amount})
+
+
+def accrue_many(bot, nick, channels, fields):
+    """Increment several fields for nick in each channel in one transaction."""
+    fields = {f: int(a) for f, a in fields.items() if f in VALID_FIELDS and a and a > 0}
+    if not fields:
         return
     if IGNORE_GUESTS and nick.lower().startswith("guest") and len(nick) > 5 and nick[-4:].isdigit():
         return
-    if not str(channel).startswith("#"):
+    chans = sorted({str(c).lower() for c in channels if str(c).startswith("#")})
+    if not chans:
         return
 
     nick = nick.lower()
-    channel = str(channel).lower()
     now = int(time.time())
-
-    _accrued = False
-    conn = _get_db(bot)
-    try:
-        # field is validated against VALID_FIELDS above — safe to format
-        conn.execute(
-            f"""INSERT INTO stats (channel, nick, last_seen, {field})
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(channel, nick) DO UPDATE SET
-                    last_seen = excluded.last_seen,
-                    {field} = {field} + ?""",
-            (channel, nick, now, amount, amount),
-        )
-        conn.commit()
-        _accrued = True
-    except Exception:
-        LOGGER.exception("chanstats: accrue error for %s/%s/%s", channel, nick, field)
-    finally:
-        conn.close()
-
-    if _accrued:
-        with _stats_lock:
-            bot.memory["chanstats_count"] = bot.memory.get("chanstats_count", 0) + 1
-            if bot.memory["chanstats_count"] >= SAVE_EVERY_EVENTS:
-                _prune_idle(bot, "events")
-                bot.memory["chanstats_count"] = 0
+    names = list(fields)
+    # field names are validated against VALID_FIELDS above — safe to format
+    sql = (
+        f"INSERT INTO stats (channel, nick, last_seen, {', '.join(names)}) "
+        f"VALUES (?, ?, ?, {', '.join('?' * len(names))}) "
+        "ON CONFLICT(channel, nick) DO UPDATE SET last_seen = excluded.last_seen, "
+        + ", ".join(f"{f} = {f} + ?" for f in names)
+    )
+    vals = [fields[f] for f in names]
+    rows = [(c, nick, now, *vals, *vals) for c in chans]
+    with _write_lock:
+        try:
+            conn = _writer(bot)
+            with conn:
+                conn.executemany(sql, rows)
+        except Exception:
+            LOGGER.exception("chanstats: accrue error for %s/%s/%s", chans, nick, names)
 
 
 def _prune_idle(bot, reason="manual"):
     """Remove records for nicks not seen within IDLE_DAYS."""
-    conn = _get_db(bot)
-    try:
-        cutoff = int(time.time()) - (IDLE_DAYS * 86400)
-        cur = conn.execute("DELETE FROM stats WHERE last_seen < ?", (cutoff,))
-        deleted = cur.rowcount
-        conn.commit()
-    except Exception:
-        LOGGER.exception("chanstats: prune error")
-        deleted = 0
-    finally:
-        conn.close()
+    cutoff = int(time.time()) - (IDLE_DAYS * 86400)
+    with _write_lock:
+        try:
+            conn = _writer(bot)
+            with conn:
+                deleted = conn.execute("DELETE FROM stats WHERE last_seen < ?", (cutoff,)).rowcount
+        except Exception:
+            LOGGER.exception("chanstats: prune error")
+            deleted = 0
 
     if deleted:
         LOGGER.info("chanstats: pruned %d idle records (%s)", deleted, reason)
+
+
+# ====================== MEMBERSHIP TRACKING ======================
+
+def _resync_members(bot):
+    """Rebuild our membership map from bot.channels."""
+    snap = {}
+    try:
+        for chan, ch in list(getattr(bot, "channels", {}).items()):
+            for n in list(getattr(ch, "users", {}) or {}):
+                snap.setdefault(str(n).lower(), set()).add(str(chan).lower())
+    except Exception:
+        LOGGER.exception("chanstats: membership resync failed")
+        return
+    with _members_lock:
+        _members.clear()
+        _members.update(snap)
+
+
+def _member_add(nick, chan):
+    with _members_lock:
+        _members.setdefault(str(nick).lower(), set()).add(str(chan).lower())
+
+
+def _member_remove(nick, chan):
+    n, c = str(nick).lower(), str(chan).lower()
+    with _members_lock:
+        chans = _members.get(n)
+        if chans:
+            chans.discard(c)
+            if not chans:
+                _members.pop(n, None)
+
+
+def _member_drop_channel(chan):
+    c = str(chan).lower()
+    with _members_lock:
+        for n in list(_members):
+            _members[n].discard(c)
+            if not _members[n]:
+                del _members[n]
+
+
+@plugin.thread(False)
+@plugin.event("366")  # RPL_ENDOFNAMES — the bot's view of a channel is complete
+def on_endofnames(bot, trigger):
+    _resync_members(bot)
+
+
+@plugin.thread(True)
+@plugin.interval(300)
+def resync_members(bot):
+    _resync_members(bot)
 
 
 # ====================== EVENT HANDLERS ======================
@@ -144,23 +224,31 @@ def pubmsg(bot, trigger):
     if trigger.nick == bot.nick:
         return
 
+    _member_add(trigger.nick, trigger.sender)
     raw = trigger.raw or ""
     if "\x01ACTION" in raw:
         accrue(bot, trigger.nick, trigger.sender, "actions")
         return
 
     text = trigger.group(0) or ""
-    accrue(bot, trigger.nick, trigger.sender, "lines")
-    word_count = len(text.split())
-    if word_count > 0:
-        accrue(bot, trigger.nick, trigger.sender, "words", word_count)
+    accrue_many(bot, trigger.nick, [trigger.sender],
+                {"lines": 1, "words": len(text.split())})
 
 
 @plugin.thread(True)
 @plugin.event("KICK")
 def on_kick(bot, trigger):
     """Track kicks given by the kicker."""
-    if str(trigger.sender).startswith("#") and trigger.nick != bot.nick:
+    if not str(trigger.sender).startswith("#"):
+        return
+    args = list(getattr(trigger, "args", None) or [])
+    if len(args) >= 2:
+        kicked = args[1]
+        if str(kicked).lower() == str(bot.nick).lower():
+            _member_drop_channel(trigger.sender)
+        else:
+            _member_remove(kicked, trigger.sender)
+    if trigger.nick != bot.nick:
         accrue(bot, trigger.nick, trigger.sender, "kicks")
 
 
@@ -186,14 +274,20 @@ def on_mode(bot, trigger):
 def on_join(bot, trigger):
     if str(trigger.sender).startswith("#"):
         if trigger.nick != bot.nick:
+            _member_add(trigger.nick, trigger.sender)
             accrue(bot, trigger.nick, trigger.sender, "joins")
 
 
 @plugin.thread(True)
 @plugin.event("PART")
 def on_part(bot, trigger):
-    if str(trigger.sender).startswith("#") and trigger.nick != bot.nick:
-        accrue(bot, trigger.nick, trigger.sender, "parts")
+    if not str(trigger.sender).startswith("#"):
+        return
+    if trigger.nick == bot.nick:
+        _member_drop_channel(trigger.sender)
+        return
+    _member_remove(trigger.nick, trigger.sender)
+    accrue(bot, trigger.nick, trigger.sender, "parts")
 
 
 @plugin.thread(True)
@@ -211,18 +305,14 @@ def on_quit(bot, trigger):
     )
     field = "splits" if is_split else "quits"
 
-    # Sopel removes the user from bot.channels before firing QUIT, so we
-    # fall back to the DB to find which channels this nick was active in.
+    # The core removes the user from bot.channels before dispatching QUIT,
+    # so use our own membership map: count only channels the nick was in
+    # (not every channel it ever had stats in).
     nick_lower = trigger.nick.lower()
-    conn = _get_db(bot)
-    try:
-        rows = conn.execute(
-            "SELECT channel FROM stats WHERE nick=?", (nick_lower,)
-        ).fetchall()
-    finally:
-        conn.close()
-    for (chan,) in rows:
-        accrue(bot, nick_lower, chan, field)
+    with _members_lock:
+        chans = _members.pop(nick_lower, set())
+    if chans:
+        accrue_many(bot, nick_lower, chans, {field: 1})
 
 
 @plugin.thread(True)
@@ -232,9 +322,22 @@ def on_nickchange(bot, trigger):
     old_nick = trigger.nick
     if old_nick == bot.nick:
         return
-    for chan in list(bot.channels):
-        if old_nick in bot.channels[chan].users:
-            accrue(bot, old_nick, chan, "nickchanges")
+    args = list(getattr(trigger, "args", None) or [])
+    new_nick = str(args[0]).lstrip(":") if args else ""
+    with _members_lock:
+        chans = _members.pop(old_nick.lower(), set())
+        if new_nick and chans:
+            _members.setdefault(new_nick.lower(), set()).update(chans)
+    if not chans and new_nick:
+        # Fallback: the core already renamed the user in bot.channels
+        for chan in list(bot.channels):
+            try:
+                if new_nick in bot.channels[chan].users:
+                    chans.add(str(chan).lower())
+            except Exception:
+                pass
+    if chans:
+        accrue_many(bot, old_nick, chans, {"nickchanges": 1})
 
 
 # ====================== HELPER FUNCTIONS ======================
@@ -658,4 +761,5 @@ def autosave(bot):
 def shutdown(bot):
     """Final prune on clean shutdown."""
     _prune_idle(bot, "shutdown")
+    _close_writer()
     LOGGER.info("chanstats: shutdown complete")

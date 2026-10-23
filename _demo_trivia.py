@@ -59,5 +59,5 @@ for cat in sample_cats:
 
 print("\n" + "=" * 60)
 print("✓ Framework ready! Run with:")
-print("  python3 cli_trivia.py -i --num 10 --shuffle")
+print("  python3 _cli_trivia.py -i --num 10 --shuffle")
 print("=" * 60)

@@ -61,4 +61,4 @@ All commands require **bot admin** privileges and must be used in a channel. `$j
 * **Whitelist**: A nick matches that nickname. A hostmask matches `user@host`, including `*` and `?` globs. The JPQ list and the antiflood list are both checked, so `$jpq whitelist add` and `$flood whitelist add` each protect against both bans. Removing an entry only deletes it from the list it was added to.
 * **Other skips**: Sopel's `nick_blocks` and `host_blocks` are ignored.
 * **Grace Period**: After a bot kick, that hostmask is ignored for 60 seconds so the kick and ban do not count as more flood events.
-* **Auto-Unban**: When bans are on and `ban_duration` is greater than 0, a timer removes the ban. Pending timers are cancelled when the bot shuts down.
+* **Auto-Unban**: When bans are on and `ban_duration` is greater than 0, a timer removes the ban. Pending timers are cancelled when the bot shuts down, but the pending unbans are saved and rescheduled when the plugin loads again (overdue ones run about a minute after loading).

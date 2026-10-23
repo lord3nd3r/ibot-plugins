@@ -270,10 +270,13 @@ def _fetch(url, etag=None, modified=None):
         headers['If-None-Match'] = etag
     if modified:
         headers['If-Modified-Since'] = modified
-    # follow redirects by hand so one can't bounce us to an internal address
+    # follow redirects by hand so one can't bounce us to an internal address;
+    # the guarded session also re-checks the *connected* IP (DNS rebinding).
+    if not _valid_url(url):
+        raise ValueError('disallowed URL')
     for _hop in range(5):
-        r = requests.get(url, headers=headers, timeout=FETCH_TIMEOUT, stream=True,
-                         allow_redirects=False)
+        r = _guarded_session().get(url, headers=headers, timeout=FETCH_TIMEOUT,
+                                   stream=True, allow_redirects=False)
         if not r.is_redirect:
             break
         nxt = urljoin(url, r.headers.get('Location', ''))
@@ -298,6 +301,34 @@ def _fetch(url, etag=None, modified=None):
 import ipaddress
 import socket
 from urllib.parse import urljoin
+
+
+def _netguard_import():
+    """Load the shared _netguard helper from this plugin's directory."""
+    import importlib.util
+    import os
+    import sys
+    for name in ('ibot_plugins._netguard', '_netguard'):
+        if name in sys.modules:
+            return sys.modules[name]
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_netguard.py')
+    spec = importlib.util.spec_from_file_location('ibot_plugins._netguard', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    sys.modules['ibot_plugins._netguard'] = mod
+    return mod
+
+
+_GUARD = threading.local()
+
+
+def _guarded_session():
+    """Per-thread requests.Session that refuses to connect to non-public
+    addresses (the connected peer IP is checked, not just the DNS answer)."""
+    sess = getattr(_GUARD, 'session', None)
+    if sess is None:
+        sess = _GUARD.session = _netguard_import().guarded_session()
+    return sess
 
 
 def _clean_link(s):

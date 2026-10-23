@@ -14,20 +14,34 @@ HEADERS = {
     "User-Agent": "SopelWiki/1.0 (https://example.com; bot)"
 }
 
+_CTRL_RE = re.compile(r'[\x00-\x1f\x7f]+')
+MAX_OUT = 400
+MAX_TERM = 200
+
+
+def _clean(text):
+    """Strip IRC control/format chars and newlines; cap the length."""
+    text = _CTRL_RE.sub(' ', str(text or ''))
+    text = re.sub(r' {2,}', ' ', text).strip()
+    return text if len(text) <= MAX_OUT else text[:MAX_OUT - 1] + '…'
+
+
 @plugin.command('wiki')
 @plugin.example('.wiki Turing test')
+@plugin.rate(user=10, channel=4)
 def wiki_search(bot, trigger):
-    term = (trigger.group(2) or '').strip()
+    term = _CTRL_RE.sub(' ', (trigger.group(2) or '')).strip()
     if not term:
         bot.reply("Usage: .wiki <search term>")
         return
+    term = term[:MAX_TERM]
 
-    grok_result = search_grokepedia(term)
+    grok_result = _clean(search_grokepedia(term))
     if grok_result:
         bot.say(f"[Grokepedia] {grok_result}")
         return
 
-    wiki_result = search_wikipedia(term)
+    wiki_result = _clean(search_wikipedia(term))
     if wiki_result:
         bot.say(wiki_result)
     else:
@@ -56,12 +70,12 @@ def search_grokepedia(term):
                 first = data[0]
                 if isinstance(first, dict):
                     return first.get('summary') or first.get('extract') or first.get('title')
-    except requests.RequestException:
+    except (requests.RequestException, ValueError):
         pass
 
     # Grokepedia is currently a coming-soon site, so also try a direct page lookup.
     try:
-        page_url = f"https://grokepedia.org/wiki/{urllib.parse.quote(term.replace(' ', '_'))}"
+        page_url = f"https://grokepedia.org/wiki/{urllib.parse.quote(term.replace(' ', '_'), safe='')}"
         resp = requests.get(page_url, headers=HEADERS, timeout=8)
         if resp.status_code == 200:
             text = resp.text
@@ -71,14 +85,14 @@ def search_grokepedia(term):
             if match:
                 snippet = re.sub(r'<[^>]+>', '', match.group(1)).strip()
                 return snippet
-    except requests.RequestException:
+    except (requests.RequestException, ValueError):
         pass
 
     return None
 
 
 def wikipedia_page_url(title):
-    return f"https://en.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
+    return f"https://en.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'), safe='')}"
 
 
 def get_wikipedia_extract(title):
@@ -135,6 +149,6 @@ def search_wikipedia(term):
                 if title and extract:
                     return f"[Wikipedia] {title}: {extract}"
                 return f"[Wikipedia] {title}: {wikipedia_page_url(title)}"
-    except requests.RequestException:
+    except (requests.RequestException, ValueError):
         pass
     return None

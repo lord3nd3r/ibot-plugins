@@ -9,7 +9,7 @@ Leave messages for users who aren't currently active. When they next speak in an
 | Command | Description |
 |---------|-------------|
 | `$tell <nick> <message>` | Leave a message for `<nick>` |
-| `$showtells` | Retrieve your pending messages immediately (via NOTICE) |
+| `$showtells` | Retrieve your pending messages immediately (via PM, 5 at a time) |
 
 ---
 
@@ -21,7 +21,7 @@ Leave messages for users who aren't currently active. When they next speak in an
    ```
    [Tell from End3r in #linux on 2026-05-09 15:43 UTC]: hey, call me back!
    ```
-4. Each message is delivered once and not repeated.
+4. Each message is delivered once and not repeated. Up to **5** messages are sent per delivery, about one per second; if more are waiting the bot adds `You have N more message(s) waiting. Use $showtells to get the next batch.`
 
 ---
 
@@ -52,3 +52,5 @@ Leave messages for users who aren't currently active. When they next speak in an
 - You cannot leave a message for yourself or for the bot.
 - Messages are stored in `~/.sopel/tell.db` (SQLite) and survive bot restarts.
 - Delivery uses PM so it doesn't clutter the channel.
+- Limits: messages are at most **350** characters; a nick can have at most **20** undelivered messages waiting, and one sender at most **30** undelivered messages queued in total. `$tell` can be used once every 5 seconds per user and `$showtells` once every 10 seconds (extra uses are ignored silently).
+- Delivered messages are removed from the database (old delivered rows are cleaned up when the plugin loads).

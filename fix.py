@@ -17,7 +17,10 @@
 #   s/hatr/hate                → also searches all recent channel history if
 #                                your own history has no match
 
+import json
 import re
+import subprocess
+import sys
 import time
 import threading
 from collections import deque
@@ -25,7 +28,6 @@ from sopel import plugin
 
 HISTORY_LEN = 20          # messages remembered per (channel, nick)
 MAX_PATTERN_LEN = 200     # guard against absurd patterns
-REGEX_TIMEOUT = 0.5       # seconds before a regex match is considered runaway
 MAX_OUTPUT_LEN = 420      # truncate corrected output to stay within IRC limits
 RATE_LIMIT = 4.0          # minimum seconds between corrections per (channel, nick)
 IRC_CHAN_PREFIXES = '#&!+' # all valid IRC channel sigils
@@ -100,29 +102,67 @@ def _get_history(bot, channel, nick):
     return list(bot.memory['fix_history'].get(key, []))
 
 
+# ---------------------------------------------------------------------------
+# Regex evaluation
+#
+# CPython's ``re`` engine holds the GIL for the whole match, so a thread with
+# join(timeout) can NOT stop a catastrophic-backtracking pattern such as
+# ``s/(a+)+$/x`` -- the whole bot stalls.  Non-literal patterns are therefore
+# evaluated in a short-lived child interpreter that is killed on timeout.
+# Plain literal patterns (no regex metacharacters) are safe and run in-process.
+# ---------------------------------------------------------------------------
+
+SUBPROC_TIMEOUT = 2.0     # wall-clock budget for the child interpreter
+MAX_CANDIDATES = 200      # messages searched per correction
+MAX_CONCURRENT = 2        # simultaneous regex children (anti fork-flood)
+_worker_slots = threading.BoundedSemaphore(MAX_CONCURRENT)
+
+_WORKER_SRC = r'''
+import json, re, sys
+d = json.loads(sys.stdin.read())
+flags_str = d["flags"]
+re_flags = re.IGNORECASE if "i" in flags_str else 0
+try:
+    compiled = re.compile(d["pattern"], re_flags)
+except re.error:
+    print(json.dumps({"error": "re"})); sys.exit(0)
+for nk, msg in d["candidates"]:
+    if compiled.search(msg):
+        break
+else:
+    print(json.dumps({})); sys.exit(0)
+replacement = re.sub(r"(?<!\\)&", r"\\g<0>", d["replacement"])
+nth = None
+for ch in flags_str:
+    if ch.isdigit() and ch != "0":
+        nth = int(ch); break
+try:
+    if "g" in flags_str:
+        out = compiled.sub(replacement, msg)
+    elif nth is not None:
+        cnt = [0]
+        def _r(m):
+            cnt[0] += 1
+            return m.expand(replacement) if cnt[0] == nth else m.group(0)
+        out = compiled.sub(_r, msg)
+    else:
+        out = compiled.sub(replacement, msg, count=1)
+except (re.error, IndexError):
+    print(json.dumps({"error": "sub"})); sys.exit(0)
+print(json.dumps({"nick": nk, "msg": msg, "corrected": out}))
+'''
+
+
+def _is_literal(pattern):
+    """True when the pattern contains no regex metacharacters at all."""
+    return not re.search(r'[\\.^$*+?{}\[\]|()]', pattern)
+
+
 def _regex_match(pattern, flags_str, text):
-    """Compile and search with a timeout guard. Returns (compiled, match) or raises."""
-    re_flags = 0
-    if 'i' in flags_str:
-        re_flags |= re.IGNORECASE
+    """Compile and search (in-process).  Only used for literal patterns."""
+    re_flags = re.IGNORECASE if 'i' in flags_str else 0
     compiled = re.compile(pattern, re_flags)
-    result = [None]
-    exc = [None]
-
-    def _run():
-        try:
-            result[0] = compiled.search(text)
-        except Exception as e:
-            exc[0] = e
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(REGEX_TIMEOUT)
-    if t.is_alive():
-        raise TimeoutError('pattern took too long')
-    if exc[0]:
-        raise exc[0]
-    return compiled, result[0]
+    return compiled, compiled.search(text)
 
 
 def _apply_sub(compiled, replacement, text, flags_str):
@@ -149,6 +189,55 @@ def _apply_sub(compiled, replacement, text, flags_str):
         return compiled.sub(_replacer, text)
     else:
         return compiled.sub(replacement, text, count=1)
+
+
+def _find_and_fix_inprocess(pattern, replacement, flags_str, candidates):
+    for nk, msg in candidates:
+        compiled, match = _regex_match(pattern, flags_str, msg)
+        if match:
+            return nk, msg, _apply_sub(compiled, replacement, msg, flags_str)
+    return None
+
+
+def _find_and_fix_subprocess(pattern, replacement, flags_str, candidates):
+    """Run search+sub in a killable child.  Returns (nick, msg, corrected) or None."""
+    if not _worker_slots.acquire(blocking=False):
+        return None
+    try:
+        payload = json.dumps({
+            'pattern': pattern, 'replacement': replacement,
+            'flags': flags_str, 'candidates': candidates,
+        })
+        try:
+            proc = subprocess.run(
+                [sys.executable, '-I', '-S', '-c', _WORKER_SRC],
+                input=payload, capture_output=True, text=True,
+                timeout=SUBPROC_TIMEOUT,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+        if proc.returncode != 0:
+            return None
+        try:
+            res = json.loads(proc.stdout.strip() or '{}')
+        except ValueError:
+            return None
+        if not res or 'error' in res:
+            return None
+        return res['nick'], res['msg'], res['corrected']
+    finally:
+        _worker_slots.release()
+
+
+def find_and_fix(pattern, replacement, flags_str, candidates):
+    """Return (nick, original, corrected) for the first matching candidate, or None."""
+    candidates = [(str(n), str(m)) for n, m in candidates[:MAX_CANDIDATES]]
+    if _is_literal(pattern):
+        try:
+            return _find_and_fix_inprocess(pattern, replacement, flags_str, candidates)
+        except (re.error, IndexError):
+            return None
+    return _find_and_fix_subprocess(pattern, replacement, flags_str, candidates)
 
 
 @plugin.rule(r'.*')
@@ -208,27 +297,12 @@ def fix_typo(bot, trigger):
                     channel_wide.append((nk, msg))
         candidates = own + channel_wide
 
-    # Find first message that matches the pattern
-    found_nick = None
-    found_msg  = None
-    compiled   = None
-    try:
-        for nk, msg in candidates:
-            compiled, match = _regex_match(pattern_str, flags_str, msg)
-            if match:
-                found_nick = nk
-                found_msg  = msg
-                break
-    except (re.error, TimeoutError):
+    # Find first message that matches the pattern and apply the substitution
+    # (non-literal patterns run in a killable child process -- see above).
+    result = find_and_fix(pattern_str, replacement, flags_str, candidates)
+    if result is None:
         return
-
-    if found_msg is None or compiled is None:
-        return
-
-    try:
-        corrected = _apply_sub(compiled, replacement, found_msg, flags_str)
-    except (re.error, IndexError):
-        return
+    found_nick, found_msg, corrected = result
 
     if corrected == found_msg:
         return

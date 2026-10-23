@@ -24,6 +24,7 @@ Multi-player trivia with categories, progressive hints, streaks, and stats.
 |---------|---------|-------------|
 | `$trivia [category] [N]` | — | Start a game with N questions (default 100, max 500), optionally filtered by category |
 | `$trivia categories` | — | List all available trivia categories |
+| `$tcategories` | `$tcats` | Same list, as its own command |
 | `$strivia` | — | Stop the current game |
 | `$triviastats [nick]` | `$tstats` | View stats for yourself or another player |
 | `$triviatop` | `$ttop` | Top 10 in this channel |

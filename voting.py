@@ -167,7 +167,7 @@ def load_active_votes(bot):
                 if time_left <= 0:
                     timer = threading.Timer(5.0, end_vote, args=[bot, channel, vote_id])
                 else:
-                    timer = threading.Timer(time_left, end_vote, args=[bot, channel, vote_id])
+                    timer = threading.Timer(min(time_left, MAX_VOTE_SECONDS), end_vote, args=[bot, channel, vote_id])
                 
                 active_votes[channel] = {
                     'vote_id': vote_id,
@@ -185,12 +185,17 @@ def load_active_votes(bot):
             pass
 
 
+MAX_VOTE_SECONDS = 30 * 86400   # T: cap (30 days)
+MIN_VOTE_SECONDS = 10
+MAX_VOTE_OPTIONS = 10
+
+
 def parse_time_duration(time_str):
     """Parse time duration like '24h', '30m', '2d' into seconds."""
     time_str = time_str.lower().strip()
     
     # Match pattern like 24h, 30m, 2d
-    match = re.match(r'^(\d+)([smhd])$', time_str)
+    match = re.match(r'^(\d{1,9})([smhd])$', time_str)
     if not match:
         return None
     
@@ -357,6 +362,10 @@ def create_vote(bot, trigger):
     if not duration_seconds:
         bot.reply("❌ Invalid time format! Use format like: 30m, 24h, 2d")
         return
+    if duration_seconds > MAX_VOTE_SECONDS or duration_seconds < MIN_VOTE_SECONDS:
+        bot.reply(f"❌ Vote duration must be between {MIN_VOTE_SECONDS}s and "
+                  f"{MAX_VOTE_SECONDS // 86400}d.")
+        return
     
     # Extract options A1:..., A2:..., etc.
     options = {}
@@ -382,6 +391,9 @@ def create_vote(bot, trigger):
     
     if len(options) < 2:
         bot.reply("❌ You need at least 2 options! Example: A1:option1 A2:option2")
+        return
+    if len(options) > MAX_VOTE_OPTIONS:
+        bot.reply(f"❌ Too many options (max {MAX_VOTE_OPTIONS}).")
         return
     
     # Create vote in database

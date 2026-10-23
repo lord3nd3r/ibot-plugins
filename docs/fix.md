@@ -78,5 +78,6 @@ Using capture groups and backreferences:
 
 ## Safety Controls
 * **Pattern Length Limit**: Maximum pattern length is 200 characters.
-* **Regex Timeout**: Regex execution has a 0.5-second timeout guard to prevent ReDoS (Regular Expression Denial of Service) hang attacks.
+* **ReDoS protection**: Plain-text patterns (no regex special characters) are matched directly. Real regex patterns are run in a short-lived separate Python process that is killed after **2 seconds**, so a pathological pattern like `s/(a+)+$/x/` can't freeze the bot. At most 2 regex corrections run at once; if one times out or the bot is busy, nothing is said.
+* **Search depth**: A correction searches at most the last 200 remembered messages.
 * **Output Truncation**: Corrected messages are capped at 420 characters to comply with IRC protocol limits.

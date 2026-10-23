@@ -34,6 +34,10 @@ sudo_big_loss_chance = 0.005
 
 # Enable/disable 1337-speak moo effects (default: true)
 leet_moo = true
+
+# Max moo-triggered bot replies per channel in any 15 seconds, all users
+# combined (default: 0 = no cap)
+max_rate_per_15sec = 0
 ```
 
 **Data storage:** Moo counts are stored in Sopel's built-in `bot.db` via SQLAlchemy — no extra database setup needed.
@@ -44,14 +48,19 @@ leet_moo = true
 
 | Trigger | Effect |
 |---------|--------|
-| `moo` (anywhere in message) | +1 moo |
-| `/me moos` | +1 moo (no cooldown) |
-| `sudo moo` | +10 moos (1/hour/user/channel) |
+| `moo` (anywhere in message) | +1 moo (per-user cooldown, `moo_cooldown`) |
+| `/me moos` (also `moos!`, `moos?`, `moos.`) | +1 moo (shares the same cooldown as a typed moo) |
+| `sudo moo` | +10 moos (1/hour/user/channel, `sudo_cooldown`) |
+
+**Cooldowns are silent:** a moo during your cooldown is simply ignored (no channel message). For `sudo moo` you get at most one private NOTICE per cooldown window telling you how long is left. If `max_rate_per_15sec` is set and the channel hits the cap, extra moos are ignored too (a blocked `sudo moo` doesn't use up your hour).
 
 ## Commands
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
+| `$moo` | — | Moo (same as typing moo; same cooldown) |
+| `$moo on\|off\|toggle` | `$mooon`, `$moooff` | Enable/disable moo in this channel (ops/admins) |
+| `$moo status` | — | Show whether moo is enabled here |
 | `$moocount` | `$mymoo` | Your moo count |
 | `$mootop` | `$topmoo` | Global moo leaderboard |
 | `$mootopchan` | `$chanmootop`, `$topmoochan` | Per-channel leaderboard |

@@ -1,108 +1,61 @@
 # 🛠️ Bot Admin (botadmin)
 
-Owner/admin-only bot management commands.
+Small owner/admin helper plugin. It provides **`$restart`**, **`$breload`** and **`$bothelp`**. Every other bot-management command (`$rehash`, `$reload`, `$load`, `$unload`, `$plugins`, `$raw`, `$say`, `$act`, `$bjoin`, `$bpart`, `$bnick`, `$bmode`, `$bquit`, `$bstatus`, `$enable`, `$disable`, `$disabled`) comes from the **ibot core admin plugin** (`ibot/plugins/admin.py`), not from this script. See the ibot docs for those.
 
 ---
 
 ## Setup
-
-**No config needed** beyond Sopel's built-in `owner` and `admins` settings.
 
 **1. Place the script:**
 ```
 ~/.sopel/scripts/botadmin.py
 ```
 
-**2. Make sure your `.cfg` has an owner and admins defined:**
+**2. Owner / admins** come from the bot's `.cfg`:
 ```ini
 [core]
 owner = YourNick
 admins =
     AdminNick1
-    AdminNick2
 ```
 
-> Owner commands (restart, quit, reload, raw, botnick) are restricted to `owner`. Admin commands (say, act, join, part, mode) work for both `owner` and `admins`.
+> If `owner_account` is set, owner checks use the core's account-based `trigger.owner`; the nick fallback is only used when no owner account is configured.
 
 ---
 
-## Owner Commands
+## Commands in this plugin
 
-| Command | Description |
-|---------|-------------|
-| `$restart` | Restart the bot |
-| `$breload <module\|all>` | Reload a plugin or all plugins |
-| `$botquit [msg]` | Shut down the bot |
-| `$raw <irc line>` | Send a raw IRC command |
-| `$botnick <nick>` | Change the bot's nick |
+| Command | Who | Description |
+|---------|-----|-------------|
+| `$restart [message]` | Owner | Restart the bot process. Uses the core's `bot.restart()` when available; otherwise it runs plugin shutdown hooks and re-executes `python3 -m ibot <cfg>` (same flags, from the ibot directory). A second `$restart` while one is in progress is ignored. If the restart can't be started, the bot replies "❌ Restart failed …; bot still running." |
+| `$breload <plugin>` | Owner | Reload one plugin — same as the core `$reload <plugin>`. |
+| `$breload all` | Owner | Reload config and all plugins — same as the core `$rehash`. |
+| `$bothelp` | Admin | List bot admin commands (sent by NOTICE in a channel, by PM otherwise). |
 
-## Admin Commands
+## Core admin commands (ibot, for reference)
 
-| Command | Description |
-|---------|-------------|
-| `$say <target> <msg>` | Make bot say something |
-| `$act <target> <action>` | Make bot do a /me action |
-| `$bjoin #channel [key]` | Join a channel |
-| `$bpart #channel [msg]` | Leave a channel |
-| `$bmode #channel <mode> [nick]` | Set a channel mode |
-| `$bothelp` | List all admin commands |
+| Command | Who | Description |
+|---------|-----|-------------|
+| `$rehash` | Owner | Reload config and all plugins |
+| `$reload <plugin>` / `$load <plugin>` / `$unload <plugin>` | Owner | Manage single plugins |
+| `$plugins` | Owner | List loaded plugins |
+| `$raw <irc line>` | Owner | Send a raw IRC line |
+| `$bnick <nick>` | Owner | Change the bot's nick |
+| `$bquit [msg]` / `$die` | Owner | Shut down the bot |
+| `$say <target> <msg>` / `$msg` | Admin | Make the bot say something |
+| `$act <target> <action>` | Admin | Make the bot do a /me action |
+| `$bjoin #chan [key]` / `$bpart #chan [msg]` | Admin | Join / leave a channel |
+| `$bmode #chan <modes> [args]` | Admin | Set a channel mode |
+| `$bstatus` | Admin | Bot status info |
+| `$enable` / `$disable <plugin> <#chan>`, `$disabled [#chan]` | Admin (PM only) | Per-channel plugin toggles |
 
 ---
 
 ## Examples
 
-**Restart the bot:**
 ```
 /msg Glitchy $restart
-```
-
-**Reload a single plugin:**
-```
 /msg Glitchy $breload mug
-```
-
-**Reload all plugins:**
-```
 /msg Glitchy $breload all
-```
-
-**Shut down the bot:**
-```
-/msg Glitchy $botquit Goodnight!
-```
-
-**Send a raw IRC command:**
-```
-/msg Glitchy $raw PRIVMSG #channel :Hello from raw!
-```
-
-**Change bot nick:**
-```
-/msg Glitchy $botnick NewNick
-```
-
-**Make the bot say something:**
-```
-/msg Glitchy $say #channel Hello everyone!
-```
-
-**Make the bot do an action:**
-```
-/msg Glitchy $act #channel waves at everyone
-```
-
-**Join/part channels:**
-```
-/msg Glitchy $bjoin #newchannel
-/msg Glitchy $bpart #oldchannel See ya!
-```
-
-**Set a channel mode:**
-```
-/msg Glitchy $bmode #channel +o User
-```
-
-**List admin commands:**
-```
 /msg Glitchy $bothelp
 ```

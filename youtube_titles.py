@@ -1,10 +1,45 @@
 from sopel import plugin, config
 import json
 import re
+import threading
+import time
+from urllib.parse import quote
+
 import requests
 
 YOUTUBE_RE = r'https?://(?:[\w-]+\.)?(?:youtube\.com|youtu\.be)/\S*'
 DB_KEY = 'youtube_titles_disabled'
+
+CHANNEL_COOLDOWN = 5     # seconds between titles in one channel
+USER_COOLDOWN = 15       # seconds between titles for one user's links
+_cd_lock = threading.Lock()
+_last_chan = {}
+_last_user = {}
+_CTRL_RE = re.compile(r'[\x00-\x1f\x7f]')
+
+
+def _cooldown_ok(channel, nick):
+    now = time.monotonic()
+    c, n = (channel or '').lower(), (nick or '').lower()
+    with _cd_lock:
+        if now - _last_chan.get(c, -1e9) < CHANNEL_COOLDOWN:
+            return False
+        if now - _last_user.get(n, -1e9) < USER_COOLDOWN:
+            return False
+        _last_chan[c] = now
+        _last_user[n] = now
+        if len(_last_user) > 2000:
+            for k in [k for k, t in _last_user.items() if now - t > USER_COOLDOWN]:
+                _last_user.pop(k, None)
+        if len(_last_chan) > 500:
+            for k in [k for k, t in _last_chan.items() if now - t > CHANNEL_COOLDOWN]:
+                _last_chan.pop(k, None)
+    return True
+
+
+def _clean(text, limit=250):
+    text = _CTRL_RE.sub('', str(text or '')).strip()
+    return text if len(text) <= limit else text[:limit - 1] + '…'
 
 
 def _is_disabled(bot, channel):
@@ -77,7 +112,10 @@ def youtube_title(bot, trigger, match=None):
     # Strip trailing punctuation that got caught by \S*
     url = re.sub(r'[>)\]\'\\"]+$', '', url)
 
-    api = 'https://www.youtube.com/oembed?url={}&format=json'.format(url)
+    if not _cooldown_ok(trigger.sender, trigger.nick):
+        return
+
+    api = 'https://www.youtube.com/oembed?url={}&format=json'.format(quote(url, safe=''))
 
     try:
         resp = requests.get(api, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
@@ -86,8 +124,10 @@ def youtube_title(bot, trigger, match=None):
     except Exception:
         return
 
-    title = obj.get('title')
-    author = obj.get('author_name')
+    if not isinstance(obj, dict):
+        return
+    title = _clean(obj.get('title'))
+    author = _clean(obj.get('author_name'), 80)
 
     if not title:
         return
