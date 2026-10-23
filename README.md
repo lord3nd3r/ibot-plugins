@@ -38,7 +38,7 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -e .
 
 # this plugin collection
-git clone https://github.com/lord3nd3r/sopel-scripts.git ~/.sopel/scripts
+git clone https://github.com/lord3nd3r/ibot-plugins.git ~/.sopel/scripts
 
 # Python packages used by the plugins (install them in the same venv)
 pip install requests beautifulsoup4 defusedxml yfinance

@@ -28,7 +28,7 @@ Answers help requests with a link to the full command reference ([commands.md](.
 
 ```
 <User> $help
-<Glitchy> User: Full command list: https://github.com/lord3nd3r/sopel-scripts/blob/main/commands.md
+<Glitchy> User: Full command list: https://github.com/lord3nd3r/ibot-plugins/blob/main/commands.md
 ```
 
 ---

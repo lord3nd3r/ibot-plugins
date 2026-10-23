@@ -22,7 +22,7 @@ For more detail (optional MySQL/PostgreSQL drivers, upgrading), see [ibot: Insta
 ## 2. Get the plugins
 
 ```bash
-git clone https://github.com/lord3nd3r/sopel-scripts.git ~/.sopel/scripts
+git clone https://github.com/lord3nd3r/ibot-plugins.git ~/.sopel/scripts
 pip install requests beautifulsoup4 defusedxml yfinance   # in the same venv as ibot
 ```
 
