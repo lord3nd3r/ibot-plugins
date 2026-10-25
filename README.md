@@ -1,5 +1,7 @@
 # 🤖 Plugins for ibot
 
+[![Donate - PayPal](https://img.shields.io/badge/Donate-PayPal-0070ba?style=for-the-badge&logo=paypal&logoColor=white)](https://3nd3r.net/paypal) [![Donate - BTC](https://img.shields.io/badge/Donate-BTC-f7931a?style=for-the-badge&logo=bitcoin&logoColor=white)](https://3nd3r.net/btc)
+
 **Designed for [ibot](https://github.com/lord3nd3r/ibot). Should also work with Sopel.**
 
 The official plugin collection for **ibot**: AI chat, channel moderation, games and a coin economy, and everyday utilities for IRC. These are the plugins that run the `glitchy` bot on Rizon.
