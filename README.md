@@ -202,7 +202,7 @@ Every plugin has its own page in [`docs/`](docs/) with commands, examples and se
 | **trivia** | Multi-player trivia with categories, progressive hints, streaks and persistent stats | [docs/trivia.md](docs/trivia.md) |
 | **weed** | Smoke and trip sessions with countdown animations and 16 substances (including `$hoss`) | [docs/weed.md](docs/weed.md) |
 | **moo** | Moo counter with legendary moos, power moos (`sudo moo`) and leaderboards | [docs/moo.md](docs/moo.md) |
-| **karma** | Inline `++` / `--` karma with per-channel and global leaderboards | [docs/karma.md](docs/karma.md) |
+| **karma** | Inline `++` / `--` karma with per-channel and global leaderboards, plus absurd global milestone callouts | [docs/karma.md](docs/karma.md) |
 
 ### ⚙️ Bot Administration
 

@@ -40,7 +40,56 @@ pip install sqlalchemy
 | `$karmabottom [N]` | `$kbottom` | Bottom N users globally |
 | `$channeltop [N]` | `$ctop` | Top N in this channel (default 10) |
 | `$channelbottom [N]` | `$cbottom` | Bottom N in this channel |
-| `$setkarma <nick> <value>` | — | Set karma (channel ops only) |
+| `$setkarma <nick> <value>` | — | Set global karma (channel ops only). Channel karma is left alone. Crossing a global milestone adds the extra line below. |
+
+---
+
+## Global milestones
+
+The boost / drop line is unchanged. A real change to **global** karma (a vote or `$setkarma` that actually moves the total) adds at most one extra line: the highest rung the **new** total qualifies for that has not been announced yet. Channel totals never trigger it. There is no rank command and no badge that sticks in `.karma`. Nothing is said at startup, and setting the same value again is silent.
+
+Rungs, both directions: **1, 10, 50, 100, 500, 1000, 2000, 5000, 10000**.
+
+- A positive total announces the highest positive rung at or below it. A negative total does the same on the negative ladder. Zero announces nothing.
+- The opposite sign is not celebrated. A `++` that leaves someone negative does not congratulate them for sinking further; if they are still negative, the line is the negative rung they **already** hold.
+- **New** means this change crossed that rung (`Karma milestone`). **Recognition** means they were already there and it had never been said (`Karma recognition` … `already there`). Recognition is not worded as fresh damage or a fresh triumph.
+- Several missed rungs, or a jump that also reaches a higher one, produce only the **highest** line. Lower ones are not read out and are not repeated later.
+- What was said is stored per nick (`karma_milestones`, schema v2: `ann_pos` / `ann_neg`). Reloading, flood rollback, or bouncing on the boundary does not repeat it. The record only moves upward.
+- `$setkarma` uses the previous global total and the value you set. It still does not change channel karma.
+- **Already-high nicks:** the next real change catches up the highest rung they already qualify for. Global +1,200 hears the +1,000 line on the way to +1,201, not silence until +2,000. Global -1,200 hears the -1,000 line. Global -261 hears -100, until a later drop actually crosses -500.
+- **Older v1 records** (`pos` / `neg` with no `v`) were silent seeds, not a log of lines that were said. They are ignored, so the next change can still catch up. If a v1 process both stored a seed and spoke a line, that one line can be said a second time. There is no separate history to tell those apart.
+
+| Global | Positive (score going up) | Negative (score going down) |
+|--------|---------------------------|-----------------------------|
+| +1 / -1 | First positive karma. A moth filed you under 'possibly nice' and then forgot. | First negative karma. A stapler sighed and opened a file it hopes to lose. |
+| 10 | Karma Adept. A vending machine bowed and refunded a coin nobody inserted. | Petty nuisance. The office plants voted to look slightly the other way. |
+| 50 | Certified Benign Oddity. The county fair pinned a ribbon to a cloud shaped like your nick. | Officially inconvenient. A middle manager stamped your aura 'see attached' and left for lunch. |
+| 100 | Civic Darling. Shopping carts are returning themselves and claiming it was your idea. | Civic grumble. Three pigeons and a parking meter co-signed a complaint in triplicate. |
+| 500 | Regional Delight. Wayward balloons rewrote their flight plans to swing past your nick. | Municipal headache. Your nick now requires a traffic cone, a pamphlet, and one bored clerk. |
+| 1000 | You are worshipped by malfunctioning satellites. | You have been legally classified as a municipal sewage incident. |
+| 2000 | Orbital choir. The malfunctioning satellites formed a choir and the only lyric is your nick. | Regional apologies desk. An intern was hired solely to regret you, with carbon copies. |
+| 5000 | Minor celestial appointment. A spare moon listed you as a reference and put gravity under hobbies. | Cartographic warning. Mapmakers added you as a smell on the windward side of the county. |
+| 10000 | Karma supernova. You are worshipped by malfunctioning satellites, and the sun requested an autograph in ultraviolet. | Planetary liability. You are legally classified as a municipal sewage incident, now with extraterritorial jurisdiction and hold music. |
+
+```
+<User> Friend++
+<Glitchy> 🆙 Karma boost! Friend gained 1 karma ✨ (🎯 10 in #channel | 🌐 1000 global)
+<Glitchy> 🎉 Karma milestone for Friend (+1,000 global): You are worshipped by malfunctioning satellites.
+```
+
+Already at +1,200, first karma after this behavior (no prior announcement):
+
+```
+<User> Friend++
+<Glitchy> 🆙 Karma boost! Friend gained 1 karma ✨ (🎯 11 in #channel | 🌐 1201 global)
+<Glitchy> 🎉 Karma recognition for Friend (+1,000 global, already there; now +1,201): You are worshipped by malfunctioning satellites.
+```
+
+```
+<User> Troll--
+<Glitchy> ⬇ Karma drop... Troll lost 1 karma 😬 (🎯 -12 in #channel | 🌐 -500 global)
+<Glitchy> 📉 Karma milestone for Troll (-500 global): Municipal headache. Your nick now requires a traffic cone, a pamphlet, and one bored clerk.
+```
 
 ---
 
