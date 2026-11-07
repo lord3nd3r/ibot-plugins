@@ -66,6 +66,17 @@ nl_actions = on
 # extra public command names to allow / command names to never auto-run
 nl_actions_allow =
 nl_actions_deny =
+
+# Optional — relay bots that carry other networks' users as "<nick/net> text"
+# (defaults: IglooIRC, RelayIgloo, blondie)
+relay_nicks = IglooIRC, RelayIgloo, blondie
+# Optional — other AI bots; never chimed in on, replies to them are loop-guarded (default: jexxley)
+ai_bot_nicks = jexxley
+# Optional — second xAI model tried on the same key when the main model is rate limited or down
+fallback_model = grok-4.20-0309-non-reasoning
+# Optional — off | auto. auto falls back to an OpenAI-compatible key already in the config
+# (ai_multi.openai_api_key, else the [chat] section's api_key) when Grok fails
+fallback_openai = auto
 ```
 
 **Personality (natural language to the bot):** defaults to **per-user**.  
@@ -75,6 +86,8 @@ Channel-wide (`in this channel` / `for everyone`) requires **op or bot admin**.
 ```
 ~/.sopel/scripts/ai-multi.py
 ```
+
+Load it once with `$load ai-multi` (owner); after updating the file, `$reload ai-multi`.
 
 > **Note:** The bot runs on [ibot](https://github.com/lord3nd3r/ibot), a custom asyncio IRC framework with a Sopel-compatible shim. Per-channel system prompts can be set via `grok_channel_prompts.json` in the scripts directory. Set `search_backend = none` when using a local backend without Grok search.
 
@@ -92,7 +105,8 @@ Channel-wide (`in this channel` / `for everyone`) requires **op or bot admin**.
 | `BotNick: forget <fact>` | Anyone | Remove a saved fact (fuzzy match) |
 | `BotNick: forget everything` | Anyone | Clear all your saved facts |
 | `BotNick: what do you remember about me` | Anyone | List all your saved facts |
-| `$grokreset` | Anyone | Reset your conversation history (not permanent facts) |
+| `$grokreset` / `$grokreset me` | Anyone | Reset your conversation history across channels and PMs; preserve facts and preferences |
+| `$grokreset everything` | Anyone | Also delete your profile, facts, preferences, fact suggestions and personal roleplay settings |
 | `$grokreset channel` | Op+ / Admin | Reset all channel conversation history |
 | `$remind <duration> <msg>` | Anyone | Set a timed reminder (e.g. `$remind 24h Do daily`, `$remind me 10m check oven`). Limits: 10 pending per user, 50 per channel, 300-char message, one `$remind` per 3s per user |
 | `$remind list` | Anyone | List your pending reminders (first 5 shown, then "+N more") |
@@ -100,6 +114,7 @@ Channel-wide (`in this channel` / `for everyone`) requires **op or bot admin**.
 | `$badmin <add\|del\|list>` | Op+ / Admin | Manage per-channel bot admins (`$badmin add [#chan] <nick>`) |
 | `$ai <on\|off>` | Op+ / Admin | Enable/disable AI entirely for the channel |
 | `$talkback <on\|off>` | Op+ / Admin | Enable/disable unprompted chime-ins |
+| `$unhinged <on\|off\|status>` | Op+ / Admin (`status`: anyone) | Per-channel unhinged roast mode (default off). See [Unhinged mode](#-unhinged-mode) |
 | `$testemote` | Admin | Check that the AI plugin is loaded and responding |
 
 ### Profiles & Learned Facts
@@ -121,6 +136,7 @@ Channel-wide (`in this channel` / `for everyone`) requires **op or bot admin**.
 |---------|-------------|
 | `$aihistory` | Show the last prompt sent to the model (PM only) |
 | `$aistats` | AI health counters (always replied by PM) |
+| `$aipardon <nick>` | Clear a nick's AI speed-limit strikes and 24h ignore |
 | `$testapi` | Test the Grok API directly |
 | `$showextract` | Show the last fact-extraction API response |
 
@@ -202,7 +218,7 @@ Grok: search for election results with sources
 
 **Trigger phrases:** `show me the links`, `sources`, `citations`, `references`, `urls`, `include links`
 
-> **Note:** The bot uses a strict extraction system that queries the API for genuine deep-link article URLs to prevent hallucinations. It does not output raw links mid-sentence; instead, it generates a clean list of verified, clickable sources at the end of its response.
+> **Note:** Source requests trigger a fresh search. The source list contains HTTP(S) URLs from that answer's structured API citation metadata; URLs written only in the model's reply are not treated as citations. Earlier channel sources are never substituted, including for source follow-ups. If the API supplies no usable citations, the reply says so. Links are checked for valid format and deduplicated, but the bot does not fetch them to verify availability or whether they support the answer.
 
 ---
 
@@ -344,7 +360,7 @@ Grok: what do you know about burnout
 - Duplicate facts are detected and rejected
 - Conversational "remember when..." / "remember how..." phrases are NOT treated as commands
 
-> **Note:** `$grokreset` clears conversation history but does NOT touch permanent facts. Use "forget everything" to clear facts.
+> **Note:** `$grokreset` clears your conversation history across channels and PMs but preserves your profile, permanent facts, preferences and personal roleplay settings. Use "forget everything" to clear just your saved facts, or `$grokreset everything` to also delete your profile, preferences, fact suggestions and personal roleplay settings. Reminders and shared channel scrollback are retained.
 
 ---
 
@@ -475,6 +491,38 @@ The system prompt instructs the bot to:
 
 ---
 
+## 😈 Unhinged Mode
+
+`$unhinged on` turns a channel into an opted-in adults-only roast channel: the bot answers what was asked, but savage, vulgar and uncensored. Hard limits remain: no slurs and no sexual content involving minors. `$unhinged off` restores the normal style; `$unhinged` or `$unhinged status` shows the current state. Only channel operators (+o or higher) and bot admins can change it; the setting is per channel and survives restarts.
+
+**Session tracking.** Every on/off switch is recorded per channel (`grok_unhinged_intervals` in `grok.sqlite3`). While a channel is **off**, only the bot's own lines sent during an unhinged session are left out of the AI's context — per-user history, the channel log, reviews, chime-ins and PM `$shape`/`$steer` directives. Everyone else's messages and the bot's normal replies before, between and after sessions stay in context. A reply that was generated in unhinged mode but sent after the switch-off is also marked. For 6 hours after a switch-off the bot also gets a short note to drop the vulgar tone. While **on**, history is replayed as before (last 4 turns). Repeated `on`/`on` or `off`/`off` changes nothing; sessions older than 30 days are pruned.
+
+> **Upgrade note:** a channel that was already on before session tracking existed gets a session with an unknown start. When it is turned off, all of the bot's earlier lines in that channel are left out once (until they age out of context); later sessions are tracked exactly.
+
+---
+
+## 🚦 Rate Limits & Bot Loops
+
+Bot admins are exempt from all of these.
+
+| Limit | Default | Behaviour |
+|-------|---------|-----------|
+| Burst strikes | more than 5 AI requests per 60s per user | Warning and 60s pause (strike); the 3rd strike within 24h ignores the user for 24 hours. `$aipardon <nick>` clears it |
+| Per user | 8 AI requests per 60s | Extra requests are dropped; one private "slow down" notice per window (never for relayed users) |
+| Per channel | 20 AI requests per 60s | Extra requests are dropped silently |
+| Pending per channel | 3 queued or in-flight | Extra requests are dropped |
+| Stale replies | 25s chat / 75s search & review / 15s chime-in | A reply not ready in time, or superseded by the same speaker's newer request, is dropped |
+
+The burst check runs first, so in practice a user who sends 6 AI requests within 60s gets a strike before reaching the 8-per-minute limit. Replies in one channel go out in request order.
+
+**Relays.** Lines from relay bots are unwrapped so the inner speaker is treated as the user: `<nick/network> text` and `<nick@network> text` are recognised from any sender; a bare `<nick> text` or `[Net] <nick> text` (and relayed `/me` actions) only from a nick in `relay_nicks`. Relayed users are rate-limited by nick plus network. After 30 back-to-back replies to one relayed speaker (each within 60s) the bot goes quiet for them, breaking relay ping-pong.
+
+**Other AI bots** (`ai_bot_nicks`): the bot never chimes in on them and does not answer them with API error messages.
+
+**Addressed vs. mentioned:** the bot replies when a line is addressed to it (`glitchy: …`, `glitchy …`, `hey glitchy …`), not when it is only talked about (`so and so is glitchy`), using the `intent_check = heuristic` rules.
+
+---
+
 ## ⚙️ Architecture & Internals (v6.0)
 
 This section documents the internal design for developers and maintainers.
@@ -483,8 +531,10 @@ This section documents the internal design for developers and maintainers.
 
 | Phase | What happens |
 |-------|--------------|
-| `setup(bot)` | Reads API key from raw configparser (bypasses ibot's `***` mask), creates a `requests.Session` with connection pooling (10/20 pool), initializes all `bot.memory` structures, wraps `bot.say`, starts 3 worker threads |
-| `shutdown(bot)` | Sets `API_WORKER_SHUTDOWN`, sends poison pills to workers, drains the queue, closes the `requests.Session`, restores `bot.say` to its original function |
+| `setup(bot)` | Reads API key from raw configparser (bypasses ibot's `***` mask), creates a `requests.Session` with connection pooling (10/20 pool), initializes all `bot.memory` structures, wraps `bot.say`, starts up to 6 API workers and a reminders worker |
+| `shutdown(bot)` | Sets the current load's stop event, sends poison pills to workers, joins each worker for up to 3 seconds, drains the queue, closes the Grok session and restores channel-log hooks |
+
+Each AI task retains its original load's stop event. After shutdown, unfinished HTTP calls may still run until they return or time out, but their replies, error notices and further message fragments are suppressed, even after a new load starts. Retry and typing delays wake immediately when that event is set.
 
 On **plugin reload** or **$rehash**, `setup()` closes any previous session before creating a new one, and guards against `bot.say` wrapper stacking via `hasattr(bot, '_grok_original_say')`. The channel scrollback is loaded back from `grok_channel_log` in `grok.sqlite3` (last 300 lines per channel). `$grokreset` still clears a user's or channel's conversation history and does not wipe that scrollback.
 
@@ -507,7 +557,7 @@ Long-lived structures like `grok_history`, `grok_locks`, and `grok_channel_log` 
 │ threads (N)      │         │
 └─────────────────┘         ▼
                      ┌──────────────┐
-                     │ Worker Pool  │ (3 daemon threads)
+                     │ Worker Pool  │ (6 daemon threads)
                      │ _api_worker()│
                      └──────────────┘
                             │
@@ -554,6 +604,10 @@ Long-lived structures like `grok_history`, `grok_locks`, and `grok_channel_log` 
 | `nl_actions` | string | `on` | Natural-language actions (`on` / `off`) |
 | `nl_actions_allow` | string | — | Comma-separated extra public commands that may be auto-run |
 | `nl_actions_deny` | string | — | Comma-separated commands that are never auto-run |
+| `relay_nicks` | list | `IglooIRC, RelayIgloo, blondie` | Relay bots whose bare `<nick> text` lines are unwrapped |
+| `ai_bot_nicks` | list | `jexxley` | Other AI bots (no chime-ins, loop-guarded) |
+| `fallback_model` | string | `grok-4.20-0309-non-reasoning` | Second xAI model on the same key when the main one is rate limited or down |
+| `fallback_openai` | string | `auto` | `auto` falls back to an OpenAI-compatible key already in the config; `off` disables |
 
 **Supported models:**
 

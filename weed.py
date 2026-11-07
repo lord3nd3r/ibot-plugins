@@ -703,7 +703,43 @@ MUNCHIES_COUNTDOWN = [
 
 
 # Content Mapping
+# =======================
+# HOSS Content (from End3r's song "The Hoss Hit Back")
+# =======================
+HOSS_GIFTS = [
+    "the hoss bong 🐴💨", "the big ol' hoss 🐴", "the hoss, packed fat 🐴🌿",
+    "the hoss bong behind the barn 🏚️🐴", "the hoss, fresh off a moonshine chaser 🥃🐴",
+]
+
+HOSS_ACTION_MESSAGES = [
+    "passes {gift} to {target} — \"Boy, take a hit\" 🤠",
+    "hands {target} {gift}... y'all beware that hoss, he'll bite you for sure 🐴",
+    "slides {gift} to {target} — I hit the hoss and the hoss hit back 💨",
+    "packs {gift} for {target}. One puff too many and you're kissin' the floor 🤮",
+    "gives {target} {gift} and steps back. Don't say I didn't warn ya 😏",
+]
+
+HOSS_FINAL_MESSAGES = [
+    formatting.bold(formatting.color("🐴 I hit the hoss and the hoss hit back! 🐴", formatting.colors.ORANGE)),
+    formatting.color("Started chokin' bad, turnin' red then black 😵", formatting.colors.RED),
+    formatting.color("Stumbled out back, knees in the dirt — pukin' out my supper, Lord it really hurt 🤮", formatting.colors.GREEN),
+    formatting.color("Coughin' while the boys laughed their ass off 😂💨", formatting.colors.YELLOW),
+    formatting.bold(formatting.color("Y'all beware that hoss, he'll bite you for sure — one puff too many and you're kissin' the floor 🐴", formatting.colors.ORANGE)),
+    formatting.color("\"Boy, you turnin' green!\" 🤢", formatting.colors.LIGHT_GREEN),
+    formatting.color("Heaved once, heaved twice, then the dam let loose... all over my boots 👢🤮", formatting.colors.GREEN),
+    formatting.color("Thought I could handle the hoss... 🐴😵💨", formatting.colors.ORANGE),
+    formatting.color("Yeah I hit the hoss... and the hoss hit back... don't say I didn't warn ya 🤠", formatting.colors.ORANGE),
+]
+
+HOSS_COUNTDOWN = [
+    formatting.color("🥃 3... Moonshine in your belly...", formatting.colors.YELLOW),
+    formatting.color("🐴 2... Suck that hoss deep...", formatting.colors.ORANGE),
+    formatting.color("💨 1... Hold it in like a dumb country fool...", formatting.colors.RED),
+]
+
+
 DATA = {
+    'hoss': (HOSS_GIFTS, HOSS_ACTION_MESSAGES, HOSS_FINAL_MESSAGES, HOSS_COUNTDOWN),
     'weed': (WEED_GIFTS, WEED_ACTION_MESSAGES, WEED_FINAL_MESSAGES, WEED_COUNTDOWN),
     'bong': (BONG_GIFTS, BONG_ACTION_MESSAGES, BONG_FINAL_MESSAGES, BONG_COUNTDOWN),
     'joint': (JOINT_GIFTS, JOINT_ACTION_MESSAGES, JOINT_FINAL_MESSAGES, JOINT_COUNTDOWN),
@@ -1075,7 +1111,7 @@ BOT_RECEPTION_ACTIONS = [
 
 @module.commands('weed', 'bong', 'joint', 'jay', 'doobie', 'spliff', 'keef', 'kief', 'trip', 'shrooms', 'mushrooms',
                  'acid', 'lsd', 'peyote', 'mescaline', 'toke', 'edibles', 'edible',
-                 'dab', 'dabs', 'blunt', 'vape', 'hash', 'munchies', 'w33d')
+                 'dab', 'dabs', 'blunt', 'vape', 'hash', 'munchies', 'w33d', 'hoss')
 @module.example('$weed username', 'Give a user a random weed item/message')
 def weed_commands(bot, trigger):
     """Send a lighthearted smoking message with cooldowns.
@@ -1316,6 +1352,8 @@ def weedhelp_command(bot, trigger):
         "  $weed <nick>        — Give someone a random weed item",
         "  $w33d <nick>        — Give someone a random weed item (1337 speak)",
         "  $bong <nick>        — Give someone a bong rip",
+        "  $hoss <nick>        — Hit the hoss... and the hoss hits back 🐴",
+        "  glitchy pack the hoss [for <nick>] — same as $hoss, in plain English",
         "  $joint <nick>       — Give someone a joint",
         "  $jay <nick>         — Give someone a jay",
         "  $doobie <nick>      — Give someone a doobie",
@@ -1350,6 +1388,52 @@ def weedhelp_command(bot, trigger):
     ]
     for line in lines:
         bot.notice(line, nick)
+
+
+# =======================
+# "glitchy pack the hoss [for nick]" natural-language trigger
+# (ai-multi.py skips lines matching the same pattern)
+# =======================
+_HOSS_NL_RE = re.compile(
+    r'^\s*(?:hey\s+|yo\s+)?(?P<botnick>[^\s:,]+)[:,]?\s+(?:please\s+|pls\s+)?'
+    r'(?:pack|load|fill|light|spark|hit|pass)\s+(?:up\s+)?(?:the|a|that|ur|your|me\s+the)\s+hoss\b'
+    r'(?:\s+(?:for|to)\s+(?P<target>[^\s.!?,]+))?',
+    re.IGNORECASE,
+)
+
+
+@module.rule(_HOSS_NL_RE.pattern)
+def hoss_natural(bot, trigger):
+    """'glitchy pack the hoss' runs the $hoss countdown; '... for nick' hands it to nick."""
+    m = _HOSS_NL_RE.match(trigger.group(0) or '')
+    if not m or m.group('botnick').lower() != (getattr(bot, 'nick', '') or '').lower():
+        return
+    channel = trigger.sender
+    if not str(channel).startswith('#'):
+        return
+    gifts, action_msgs, final_msgs, countdown_msgs = DATA['hoss']
+    now = time.time()
+    user_id = trigger.account or trigger.nick
+    LAST_WEED_ITEM[str(channel).lower()] = ('hoss', now)
+    target = m.group('target')
+    if target and target.lower() in ('me', 'myself'):
+        target = trigger.nick
+    if target:
+        chan_obj = bot.channels.get(str(channel))
+        if chan_obj is not None and target.lower() not in [u.lower() for u in chan_obj.users.keys()]:
+            bot.notice(f"{target} isn't in the channel.", trigger.nick)
+            return
+        remaining = _cooldown_check_and_set(PER_USER_LAST, (channel, user_id), PER_USER_COOLDOWN, now)
+        if remaining > 0:
+            bot.notice(f"You must wait {_format_remaining(remaining)} before giving hoss again in {channel}.", trigger.nick)
+            return
+        bot.action(random.choice(action_msgs).format(target=target, gift=random.choice(gifts)))
+        return
+    remaining = _cooldown_check_and_set(LAST_USED, channel, COOLDOWN, now)
+    if remaining > 0:
+        bot.notice(f"The hoss countdown is on cooldown for {_format_remaining(remaining)} in {channel}.", trigger.nick)
+        return
+    _start_countdown(bot, channel, 'hoss', countdown_msgs, final_msgs, source='inline')
 
 
 # Register cleanup handler for graceful shutdown

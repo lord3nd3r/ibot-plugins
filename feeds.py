@@ -75,6 +75,7 @@ NAME_RE = re.compile(r'^[A-Za-z0-9._-]{1,32}$')
 USER_AGENT = 'Mozilla/5.0 (compatible; glitchy-feeds/1.0; +IRC bot)'
 RECENT_KEEP_SECS = 48 * 3600  # same-story dedupe window per channel
 RECENT_MAX = 300              # max remembered posted titles per channel
+MAX_ITEM_AGE = 3 * 86400      # skip items whose own date is older than this
 SHORTEN_OVER = 80             # shorten links longer than this via TinyURL
 SHORTEN_TIMEOUT = 5           # seconds for the TinyURL call
 # ──────────────────────────────────────────────────────────────────────
@@ -183,6 +184,8 @@ def _child_text(el, name):
 
 # 'Re: ...', 'Fwd: ...', '[list] RE[2]: ...' etc.
 _REPLY_RE = re.compile(r'^\s*(\[[^\]]*\]\s*)*(re|fwd?|aw)\s*(\[\d+\])?\s*:', re.I)
+# cve.now-style follow-ups on already-posted items: "... (Update: CVSS score 8.8 published)"
+_UPDATE_RE = re.compile(r"\(\s*update\s*:", re.I)
 
 
 def _clean(s):
@@ -444,6 +447,11 @@ def _same_story(a, b):
     for bg in bg_a & bg_b:
         if len(common - set(bg)) >= 2:
             return True
+    # obit-style headlines: same age/number plus a shared name word
+    # ("Chuck Norris ... dies at 86" vs "... Fighter Chuck Norris Dies at 86")
+    if any(x.isdigit() and len(x) >= 2 for x in common) and \
+            any(len(x) >= 3 and not x.isdigit() for x in common):
+        return True
     union = tok_a | tok_b
     return bool(union) and len(common) >= 3 and len(common) / len(union) >= 0.6
 
@@ -573,8 +581,10 @@ def _poll_feed(bot, feed):
     out = []
     for _i, t, l, ts in reversed(new):
         t = _clean(t) or '(untitled)'
-        if _REPLY_RE.match(t):
+        if _REPLY_RE.match(t) or _UPDATE_RE.search(t):
             continue
+        if ts and ts < now - MAX_ITEM_AGE:
+            continue  # old story resurfacing (e.g. Google News search feeds)
         out.append((t, l.strip(), ts))
     return out
 

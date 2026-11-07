@@ -9,4 +9,7 @@ COMMANDS_URL = "https://github.com/lord3nd3r/ibot-plugins/blob/main/commands.md"
 @module.example("$help")
 def help_command(bot, trigger):
     """Links to the full command reference."""
-    bot.say(f"{trigger.nick}: Full command list: {COMMANDS_URL}")
+    bot.say(
+        f"{trigger.nick}: Full command list: {COMMANDS_URL} | "
+        "Official support: #glitchy"
+    )

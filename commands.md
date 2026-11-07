@@ -12,9 +12,9 @@ The examples use the **`$`** prefix (what the `glitchy` bot uses, `prefix = \$` 
 
 | Script | Description |
 |--------|-------------|
-| [🧠 AI Chatbot](docs/ai-multi.md) | Talk to the bot via Grok, Ollama, or an OpenAI-compatible API |
+| [🧠 AI Chatbot](docs/ai-multi.md) | Talk to the bot via Grok, Ollama, or an OpenAI-compatible API; `$unhinged`, `$aistats`, `$aipardon` |
 | [🍺 Bartender](docs/beer.md) | Virtual bar with drinks, tips, and a unified coin economy |
-| [🌿 Weed & Trippy](docs/weed.md) | Themed smoke/trip messages with countdown animations |
+| [🌿 Weed & Trippy](docs/weed.md) | Themed smoke/trip messages with countdown animations (incl. `$hoss`) |
 | [💰 Coins & Mugging](docs/mug.md) | IRC economy — coins, mugging, bounties, shop, gambling |
 | [🛠️ Bot Admin](docs/botadmin.md) | `$restart`, `$breload`, `$bothelp` (other admin commands are in the ibot core) |
 | [🔍 IRC Oper Scanner](docs/operscan.md) | PM-only scanner to identify network/server IRC operators |
@@ -32,6 +32,7 @@ The examples use the **`$`** prefix (what the `glitchy` bot uses, `prefix = \$` 
 | [🚪 Join](docs/join.md) | Make the bot join a channel (owner only) |
 | [🎬 YouTube Titles](docs/youtube_titles.md) | Auto-detect YouTube links and show video info |
 | [📰 RSS/Atom Feeds](docs/feeds.md) | Post new RSS/Atom feed items to subscribed channels (`$feed`) |
+| [🎨 Image Generation](docs/imagegen.md) | `$img <prompt>` makes an image with Cloudflare Workers AI and posts a sharey.org link |
 | [🔗 URL Titles](docs/url_titles.md) | Automatic webpage title fetching (`$urltitle on/off`) |
 | [🎙️ Auto Voice](docs/autovoice.md) | Activity-based auto-voicing for active chatters (per-channel threshold) |
 | [🤖 Auto Op](docs/autoop.md) | Auto-mode list for +o, +h, and +v on join |
@@ -47,7 +48,7 @@ The examples use the **`$`** prefix (what the `glitchy` bot uses, `prefix = \$` 
 | [👁️ Seen](docs/seen.md) | Report when a user was last seen in the channel |
 | [🌲 Hunting Game](docs/hunt.md) | Wildlife hunting game with guns, permits, ammo, and steady aim mechanics |
 | [ᓚᘏᗢ Cat](docs/cat.md) | Print a random unicode cat (`$cat`) |
-| [📋 Help Link](docs/commands.md) | `$help` / `$commands` / `$cmds` link to this page |
+| [📋 Help Link](docs/commands.md) | `$help` / `$commands` / `$cmds` link to this page and the `#glitchy` support channel |
 
 ---
 

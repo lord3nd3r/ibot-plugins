@@ -2,7 +2,7 @@
 
 > **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
 
-A lighthearted party/sesh plugin for ibot with countdown animations (solo mode) and gift actions (with a target user). It supports 15 substance categories, inline triggers, and rotation passing.
+A lighthearted party/sesh plugin for ibot with countdown animations (solo mode) and gift actions (with a target user). It supports 16 substance categories (including the hoss), inline triggers, and rotation passing.
 
 ---
 
@@ -44,6 +44,7 @@ All commands support an optional target `<nick>` argument. If the target is pres
 | `$vape` | — | Discreet vapor hits 🔌☁️ |
 | `$hash` | — | Old-world hash crumble 🟤 |
 | `$munchies` | — | Raiding the kitchen for snacks 🍕🍿 |
+| `$hoss` | `BotNick pack the hoss [for <nick>]` | "I hit the hoss and the hoss hit back" 🐴 (from End3r's song) |
 
 ### Rotation & Help Commands
 
@@ -97,6 +98,14 @@ Countdown commands can be triggered **mid-sentence**:
 * Mid-sentence triggers respect the same 20-minute channel cooldown.
 * To prevent duplicate triggers, messages starting with a command prefix (`$`) do not trigger inline rules.
 
+### "Pack the hoss"
+Addressing the bot in plain English runs the hoss without a `$` command:
+```
+<User> glitchy pack the hoss          -> hoss countdown (20-minute channel cooldown)
+<User> glitchy pack the hoss for Bob  -> /me hands Bob the hoss (30-second per-user cooldown)
+```
+Verbs `pack`/`load`/`fill`/`light`/`spark`/`hit`/`pass` work, `for me` targets yourself, and the target must be in the channel. Channels only; ai-multi stays out of these lines.
+
 ---
 
 ## Substance Pools Reference
@@ -119,6 +128,7 @@ Countdown commands can be triggered **mid-sentence**:
 | Vape | 10 | live resin cart, disposable pen, volcano bag |
 | Hash | 10 | Nepalese temple ball, Moroccan blonde, Afghani black chunk |
 | Munchies | 12 | pepperoni pizza, nacho cheese chips, cold leftovers, ice cream |
+| Hoss | 5 | the hoss bong, the big ol' hoss, the hoss packed fat |
 
 ---
 

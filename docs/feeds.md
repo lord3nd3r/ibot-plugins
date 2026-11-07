@@ -75,8 +75,10 @@ Feeds are a **global list** managed by bot admins (and feed admins). Channel ops
 ### Filtering & De-duplication
 
 - **Mailing-list replies are skipped:** titles starting with `Re:`, `Fwd:`, `Fw:`, `AW:` (including after `[list]` tags, e.g. `[oss-security] Re: ...`).
+- **Update follow-ups are skipped** when polling: titles containing `(Update: ...)` (e.g. cve.now `... (Update: CVSS score 8.8 published)`) are not posted again.
+- **Old stories are skipped** when polling: items whose own date is more than **3 days** old (e.g. old articles resurfacing in Google News search feeds) are not posted.
 - **Duplicate titles** queued for the same channel in one poll are posted once.
-- **Same story from different outlets** (e.g. Google News aggregations) is skipped if a matching story was posted in that channel in the last **48 hours**. Titles match when they share a proper-name pair plus two other meaningful words, or have heavy word overlap. Titles carrying an **advisory ID** (`CVE-`, `GHSA-`, `DSA-`/`DLA-`, `USN-`, `RHSA-`, `GLSA`, `SUSE-SU-`, `FEDORA-`, `XSA-`, etc.) only match a title with the **identical set of IDs**, so different advisories are never merged.
+- **Same story from different outlets** (e.g. Google News aggregations) is skipped if a matching story was posted in that channel in the last **48 hours**. Titles match when they share a proper-name pair plus two other meaningful words, share the same number of two or more digits plus a name word (obituary-style headlines such as `... dies at 86`), or have heavy word overlap. Titles carrying an **advisory ID** (`CVE-`, `GHSA-`, `DSA-`/`DLA-`, `USN-`, `RHSA-`, `GLSA`, `SUSE-SU-`, `FEDORA-`, `XSA-`, etc.) only match a title with the **identical set of IDs**, so different advisories are never merged.
 - `$feed latest` applies the same reply filter and same-story check.
 
 ### Links

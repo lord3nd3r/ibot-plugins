@@ -133,7 +133,8 @@ Plugin settings go in **the same ibot `.cfg` file**, each in its own `[section]`
 
 | Plugin | Section | Keys (all optional unless noted) | Docs |
 |---|---|---|---|
-| `ai-multi.py` | `[ai_multi]` | `api_key` (needed for Grok), `model`, `chat_backend`, `search_backend`, `ollama_url`, `ollama_model`, `openai_api_key`, `openai_base_url`, `openai_model`, `system_prompt`, `blocked_channels`, `nl_actions`, `nl_actions_allow`, `nl_actions_deny`, `intent_check`, `banned_nicks`, `ignored_nicks` | [docs/ai-multi.md](docs/ai-multi.md) |
+| `ai-multi.py` | `[ai_multi]` | `api_key` (needed for Grok), `model`, `chat_backend`, `search_backend`, `ollama_url`, `ollama_model`, `openai_api_key`, `openai_base_url`, `openai_model`, `system_prompt`, `blocked_channels`, `nl_actions`, `nl_actions_allow`, `nl_actions_deny`, `intent_check`, `banned_nicks`, `ignored_nicks`, `relay_nicks`, `ai_bot_nicks`, `fallback_model`, `fallback_openai` | [docs/ai-multi.md](docs/ai-multi.md) |
+| `imagegen.py` | `[imagegen]` | `account_id` and `api_token` (needed; or env `CF_ACCOUNT_ID` / `CF_API_TOKEN`), `model`, `steps`, `daily_cap`, `user_cooldown`, `max_concurrent`, `max_prompt`, `expiry`, `channels` | [docs/imagegen.md](docs/imagegen.md) |
 | `antiflood.py` | `[antiflood]` | `window`, `threshold`, `ban_duration`, `banmask_style`, `exempt_modes`, `enabled` | [docs/antiflood.md](docs/antiflood.md) |
 | `jpq.py` | `[jpq]` | `window`, `threshold`, `ban_duration`, `banmask_style`, `exempt_modes`, `enabled` | [docs/jpq.md](docs/jpq.md) |
 | `hunt.py` | `[hunt]` | `channels`, `spawn_min`, `spawn_max` | [docs/hunt.md](docs/hunt.md) |
@@ -167,7 +168,7 @@ Run `$rehash` after you edit the file. ibot also accepts environment overrides f
 
 | Package | Needed by |
 |---|---|
-| `requests` | `ai-multi`, `antispam`, `feeds`, `harambe`, `markov`, `url_titles`, `weather`, `wiki`, `youtube_titles` (and the `_netguard` helper) |
+| `requests` | `ai-multi`, `antispam`, `feeds`, `harambe`, `imagegen`, `markov`, `url_titles`, `weather`, `wiki`, `youtube_titles` (and the `_netguard` helper) |
 | `beautifulsoup4` | `url_titles` |
 | `defusedxml` | `feeds` |
 | `yfinance` | `stock` |
@@ -185,7 +186,7 @@ Every plugin has its own page in [`docs/`](docs/) with commands, examples and se
 
 | Plugin | Description | Docs |
 |--------|-------------|------|
-| **ai-multi** | Multi-backend AI chatbot (xAI Grok, Ollama, OpenAI) with memory, web search, and an intoxication system | [docs/ai-multi.md](docs/ai-multi.md) |
+| **ai-multi** | Multi-backend AI chatbot (xAI Grok, Ollama, OpenAI) with memory, web search, an intoxication system, per-channel unhinged roast mode, relay support and rate limits | [docs/ai-multi.md](docs/ai-multi.md) |
 | **antispam** | Multi-mode anti-spam protection, copypasta detection, and Grok AI kick protection | [docs/antispam.md](docs/antispam.md) |
 | **antiflood** | Join/part cycle flood protection and user whitelist management | [docs/antiflood.md](docs/antiflood.md) |
 | **jpq** | Join/Part/Quit cycle flood protection (enabled by default) | [docs/jpq.md](docs/jpq.md) |
@@ -199,7 +200,7 @@ Every plugin has its own page in [`docs/`](docs/) with commands, examples and se
 | **beer** | Virtual bartender with drinks, tipping, and the shared coin economy | [docs/beer.md](docs/beer.md) |
 | **hunt** | Wildlife hunting game with guns, ammo, steady-aim mechanics, permits and loot (uses mug coins when mug is loaded) | [docs/hunt.md](docs/hunt.md) |
 | **trivia** | Multi-player trivia with categories, progressive hints, streaks and persistent stats | [docs/trivia.md](docs/trivia.md) |
-| **weed** | Smoke and trip sessions with countdown animations and 15 substances | [docs/weed.md](docs/weed.md) |
+| **weed** | Smoke and trip sessions with countdown animations and 16 substances (including `$hoss`) | [docs/weed.md](docs/weed.md) |
 | **moo** | Moo counter with legendary moos, power moos (`sudo moo`) and leaderboards | [docs/moo.md](docs/moo.md) |
 | **karma** | Inline `++` / `--` karma with per-channel and global leaderboards | [docs/karma.md](docs/karma.md) |
 
@@ -227,6 +228,7 @@ Every plugin has its own page in [`docs/`](docs/) with commands, examples and se
 | **tell** | Stores messages for offline users and delivers them by PM when the user next speaks | [docs/tell.md](docs/tell.md) |
 | **seen** | Reports when a user was last seen speaking in a channel | [docs/seen.md](docs/seen.md) |
 | **feeds** | RSS/Atom feed poster with a global feed list, per-channel subscriptions, de-duplication and link shortening (`$feed`) | [docs/feeds.md](docs/feeds.md) |
+| **imagegen** | `$img <prompt>`: Cloudflare Workers AI (FLUX.1 schnell) image generation, posted as a sharey.org link, with a daily cap | [docs/imagegen.md](docs/imagegen.md) |
 | **url_titles** | Fetches and shows the HTML `<title>` of posted links | [docs/url_titles.md](docs/url_titles.md) |
 | **youtube_titles** | Detects YouTube links and shows the video title and channel | [docs/youtube_titles.md](docs/youtube_titles.md) |
 
@@ -240,7 +242,7 @@ Every plugin has its own page in [`docs/`](docs/) with commands, examples and se
 | **tableflip** | 4-step table flip ASCII animation (`$flip`) | [docs/tableflip.md](docs/tableflip.md) |
 | **fix** | Sed-style typo correction (`s/find/replace/`) | [docs/fix.md](docs/fix.md) |
 | **cat** | Random unicode cat (`$cat`) | [docs/cat.md](docs/cat.md) |
-| **commands** | `$help` / `$commands` / `$cmds` reply with a link to the command reference | [docs/commands.md](docs/commands.md) |
+| **commands** | `$help` / `$commands` / `$cmds` reply with a link to the command reference and the `#glitchy` support channel | [docs/commands.md](docs/commands.md) |
 
 ---
 

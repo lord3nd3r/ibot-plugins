@@ -2,7 +2,7 @@
 
 > **Works with [ibot](https://github.com/lord3nd3r/ibot) (recommended) · Sopel-compatible.** Examples use the `$` prefix; ibot's default is `.`. To load these plugins, see the [Quick start](../README.md#-quick-start-with-ibot).
 
-Answers help requests with a link to the full command reference ([commands.md](../commands.md) on GitHub).
+Answers help requests with a link to the full command reference ([commands.md](../commands.md) on GitHub) and official support in `#glitchy`, all on one line.
 
 ---
 
@@ -28,7 +28,7 @@ Answers help requests with a link to the full command reference ([commands.md](.
 
 ```
 <User> $help
-<Glitchy> User: Full command list: https://github.com/lord3nd3r/ibot-plugins/blob/main/commands.md
+<Glitchy> User: Full command list: https://github.com/lord3nd3r/ibot-plugins/blob/main/commands.md | Official support: #glitchy
 ```
 
 ---

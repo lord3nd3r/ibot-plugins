@@ -1,6 +1,11 @@
-"""Tests for the pure helpers and intent decisions in ai-multi.py."""
+"""Tests for helpers, intent decisions, dispatch guards and reset persistence in ai-multi.py."""
 
 import logging
+import threading
+from collections import deque
+from types import SimpleNamespace
+
+import pytest
 
 
 class _Trigger:
@@ -445,3 +450,360 @@ def test_personality_command_rejects_bare_be(ai):
     assert ai._personality_command_match('be honest') is None
     assert ai._personality_command_match('talk later') is None
     assert ai._personality_command_match('hello there') is None
+
+
+# --- duplicate dispatch and reset persistence --------------------------------
+
+@pytest.fixture
+def stateful_ai_bot(ai, tmp_path):
+    bot = _Bot()
+    bot.nick = 'glitchy'
+    bot.channels = {}
+    bot.config = SimpleNamespace(
+        core=SimpleNamespace(nick='glitchy'),
+        ai_multi=SimpleNamespace(
+            blocked_channels=[], banned_nicks=[], ignored_nicks=[],
+            system_prompt='Keep replies short.', nl_actions='off',
+        ),
+    )
+    bot.memory = {
+        'grok_db_path': str(tmp_path / 'test.sqlite3'),
+        'grok_history': {},
+        'grok_locks': {},
+        'grok_locks_lock': threading.Lock(),
+        'grok_user_personality': {},
+        'grok_channel_personality': {},
+        'grok_dedup_cache': ai._BoundedTTLCache(),
+        'grok_user_last_cache': ai._BoundedTTLCache(),
+        'grok_session': object(),
+    }
+    bot.replies = []
+    bot.reply = bot.replies.append
+    bot.say = lambda text, target: bot.replies.append(text)
+    ai._init_db(bot)
+    return bot
+
+
+class _MessageTrigger:
+    nick = 'Alice'
+
+    def __init__(self, text='hello there', sender='Alice', arg=''):
+        self.text = text
+        self.sender = sender
+        self.arg = arg
+
+    def group(self, index):
+        return self.text if index == 0 else self.arg
+
+
+def test_message_dedup_records_first_message(ai, stateful_ai_bot, monkeypatch):
+    bot = stateful_ai_bot
+    reached = []
+    monkeypatch.setattr(ai, '_handle_admin_pm_commands', lambda *args: reached.append(1) or True)
+    trigger = _MessageTrigger()
+    ai.handle(bot, trigger)
+    ai.handle(bot, trigger)
+    assert reached == [1]
+    assert len(bot.memory['grok_dedup_cache']) == 1
+
+
+def test_double_dispatch_records_first_request(ai, stateful_ai_bot, monkeypatch):
+    bot = stateful_ai_bot
+    queued = []
+    # Bypass the earlier guards to exercise the final dispatch guard itself.
+    bot.memory.pop('grok_dedup_cache')
+    monkeypatch.setattr(ai, '_ai_flood_check', lambda *args: False)
+    monkeypatch.setattr(ai, '_ai_rate_gate', lambda *args: False)
+    monkeypatch.setattr(ai, '_command_catalog_for', lambda *args: ([], []))
+    monkeypatch.setattr(ai, '_enqueue_ai_task', lambda *args, **kwargs: queued.append(args[0]))
+    ai.handle(bot, _MessageTrigger('hello there'))
+    ai.handle(bot, _MessageTrigger('hello again'))
+    assert len(queued) == 1
+    assert len(bot.memory['grok_user_last_cache']) == 1
+
+
+@pytest.mark.parametrize('sender', ['Alice', '#chat'])
+@pytest.mark.parametrize('arg', ['', 'me', 'everything'])
+def test_reset_preserves_facts_unless_explicit(ai, stateful_ai_bot, sender, arg):
+    bot = stateful_ai_bot
+    for nick in ('Alice', 'Bob'):
+        ai._db_add_turn(bot, nick, 'user', 'channel turn', '#chat')
+        ai._db_add_turn(bot, nick, 'assistant', 'private turn', 'PM')
+        ai._db_add_profile_fact(bot, nick, 'likes IRC', 'test')
+        ai._db_set_user_pref(bot, nick, tz='America/Chicago', fmt='12')
+        ai._db_add_fact_suggestion(bot, nick, 'plays chess', 0.5, 'test')
+        bot.memory['grok_history'][('#chat', nick)] = deque(['cached turn'])
+        bot.memory['grok_history'][('PM', nick.lower())] = deque(['private cached turn'])
+    bot.memory['grok_user_personality'] = {'#chat': {'alice': 'pirate', 'bob': 'robot'}}
+    bot.memory['grok_channel_personality']['PM:alice'] = 'pirate'
+
+    ai.grokreset(bot, _MessageTrigger(sender=sender, arg=arg))
+
+    assert ai._db_get_recent(bot, 'Alice') == []
+    assert ai._db_get_recent(bot, 'Bob')
+    assert set(bot.memory['grok_history']) == {('#chat', 'Bob'), ('PM', 'bob')}
+    assert ai._db_get_user_profile(bot, 'Bob')['facts'] == ['likes IRC']
+    with ai._DBContext(bot) as conn:
+        prefs = conn.execute('SELECT nick FROM grok_user_prefs').fetchall()
+        suggestions = conn.execute('SELECT nick FROM grok_profile_suggestions').fetchall()
+    if arg == 'everything':
+        assert ai._db_get_user_profile(bot, 'Alice') is None
+        assert prefs == [('bob',)]
+        assert suggestions == [('bob',)]
+        assert bot.memory['grok_user_personality']['#chat'] == {'bob': 'robot'}
+        assert 'PM:alice' not in bot.memory['grok_channel_personality']
+    else:
+        assert ai._db_get_user_profile(bot, 'Alice')['facts'] == ['likes IRC']
+        assert ('alice',) in prefs
+        assert ('alice',) in suggestions
+        assert bot.memory['grok_user_personality']['#chat']['alice'] == 'pirate'
+        assert bot.memory['grok_channel_personality']['PM:alice'] == 'pirate'
+
+
+def test_reset_reports_database_failure(ai, stateful_ai_bot, monkeypatch):
+    bot = stateful_ai_bot
+    bot.memory['grok_history'][('PM', 'alice')] = deque(['keep this turn'])
+    def unavailable(bot):
+        raise OSError('unavailable')
+
+    monkeypatch.setattr(ai, '_db_conn', unavailable)
+    ai.grokreset(bot, _MessageTrigger())
+    assert bot.memory['grok_history'][('PM', 'alice')]
+    assert 'Could not reset' in bot.replies[-1]
+
+
+# --- shutdown and reload cancellation ----------------------------------------
+
+@pytest.mark.parametrize('outcome', ['reply', 'timeout'])
+def test_inflight_request_stays_cancelled_after_reload(ai, stateful_ai_bot, monkeypatch, outcome):
+    bot = stateful_ai_bot
+    stop = threading.Event()
+    entered = threading.Event()
+    release = threading.Event()
+    bot.memory['grok_worker_stop'] = stop
+    monkeypatch.setattr(ai, 'API_TASK_QUEUE', ai.queue.Queue())
+    monkeypatch.setattr(ai, '_ORDER_STATE', {})
+    monkeypatch.setattr(ai, '_PENDING', {})
+    monkeypatch.setattr(ai, '_REQ_SEQ', {})
+    monkeypatch.setattr(ai.random, 'uniform', lambda *args: 0)
+    calls = []
+
+    def blocked_api(*args, **kwargs):
+        calls.append(1)
+        entered.set()
+        if not release.wait(20):
+            raise AssertionError('Test never released the API request')
+        if outcome == 'timeout':
+            raise ai.requests.exceptions.Timeout('request completed after shutdown')
+        return 'old reply', []
+
+    monkeypatch.setattr(ai, '_call_responses_api', blocked_api)
+    task = {
+        'bot': bot, 'trigger': _MessageTrigger(),
+        'messages': [{'role': 'user', 'content': 'hello'}],
+        'review_mode': False, 'is_pm': True, 'bot_nick': bot.nick,
+        'chan_lock': threading.Lock(),
+    }
+    ai._enqueue_ai_task(task, 'PM:Alice', 'Alice')
+    worker = threading.Thread(target=ai._api_worker_loop, args=(stop,), daemon=True)
+    bot.memory['grok_worker_threads'] = [worker]
+    worker.start()
+    try:
+        assert entered.wait(2), 'Worker never started the API request'
+        ai.shutdown(bot)
+        assert stop.is_set()
+        assert worker.is_alive(), 'Request should still be in flight after the bounded join'
+        # Model setup of the next load while the old HTTP call is still running.
+        new_stop = threading.Event()
+        bot.memory['grok_worker_stop'] = new_stop
+        bot.memory['grok_api_disabled'] = False
+        bot.memory['grok_session'] = object()
+        release.set()
+        worker.join(timeout=2)
+        assert not worker.is_alive()
+        assert bot.replies == []
+        assert calls == [1]  # cancellation must also prevent retries/fallbacks
+        assert bot.memory['grok_history'] == {}
+        assert ai._db_get_recent(bot, 'Alice') == []
+        assert ai._PENDING.get('pm:alice', 0) == 0
+        assert ai._ORDER_STATE['pm:alice']['low'] == 1
+        assert ai.API_TASK_QUEUE.unfinished_tasks == 0
+
+        # The new generation can still reply normally.
+        monkeypatch.setattr(ai, '_call_responses_api', lambda *args, **kwargs: ('new reply', []))
+        ai._api_worker(**task, stop_event=new_stop)
+        assert len(bot.replies) == 1
+        assert 'new reply' in bot.replies[0]
+    finally:
+        stop.set()
+        release.set()
+        worker.join(timeout=2)
+
+
+@pytest.mark.parametrize('action', [False, True])
+def test_shutdown_stops_remaining_reply_fragments(ai, stateful_ai_bot, monkeypatch, action):
+    bot = stateful_ai_bot
+    stop = threading.Event()
+    sent = []
+    monkeypatch.setattr(ai, 'MAX_SEND_LEN', 5)
+
+    def first_part(text, target):
+        sent.append((text, target))
+        stop.set()
+        bot.memory['grok_worker_stop'] = threading.Event()
+
+    bot.say = first_part
+    bot.action = first_part
+    text = ('ACTION ' if action else '') + 'first second third'
+    ai.send(bot, '#chat', text, stop_event=stop)
+    assert sent == [('first', '#chat')]
+
+
+def test_cancelled_queued_task_makes_no_api_call(ai, stateful_ai_bot, monkeypatch):
+    bot = stateful_ai_bot
+    old_stop = threading.Event()
+    old_stop.set()
+    bot.memory['grok_worker_stop'] = threading.Event()
+
+    def unexpected_api(*args, **kwargs):
+        pytest.fail('Cancelled queued request attempted an API call')
+
+    monkeypatch.setattr(ai, '_call_responses_api', unexpected_api)
+    ai._api_worker(
+        bot=bot, trigger=_MessageTrigger(), messages=[{'role': 'user', 'content': 'hello'}],
+        review_mode=False, is_pm=True, bot_nick=bot.nick,
+        chan_lock=threading.Lock(), stop_event=old_stop,
+    )
+    assert bot.replies == []
+
+
+# --- citation provenance and answer isolation --------------------------------
+
+
+def _response_payload(text, annotations=(), citations=()):
+    return {
+        'output': [{'type': 'message', 'role': 'assistant', 'content': [
+            {'type': 'output_text', 'text': text, 'annotations': list(annotations)},
+        ]}],
+        'citations': list(citations),
+    }
+
+
+def _read_fake_response(ai, bot, payload):
+    response = SimpleNamespace(raise_for_status=lambda: None, json=lambda: payload)
+    bot.memory['grok_session'] = SimpleNamespace(post=lambda *args, **kwargs: response)
+    return ai._call_responses_api(
+        bot, [{'role': 'user', 'content': 'show sources'}], 'test-model', 0.5, 100,
+        search_mode=True,
+    )
+
+
+def test_response_prose_urls_are_not_citations(ai, stateful_ai_bot):
+    text = 'Read [this](https://invented.example/article) or https://copied.example/post'
+    reply, citations = _read_fake_response(ai, stateful_ai_bot, _response_payload(text))
+    assert reply == text
+    assert citations == []
+
+
+def test_response_accepts_only_structured_url_citations(ai, stateful_ai_bot):
+    payload = _response_payload('A sourced answer', annotations=[
+        {'type': 'url_citation', 'url': 'https://EXAMPLE.com/News'},
+        {'type': 'url_citation', 'url_citation': {'url': 'https://example.com/News', 'title': 'News'}},
+        {'type': 'other', 'url': 'https://ignored.example/post'},
+        {'type': 'url_citation', 'url_citation': 'malformed'},
+        {'type': 'url_citation', 'url': 42},
+    ], citations=[
+        'https://example.com/news',  # case-sensitive path: a different resource
+        {'url': 'https://other.example/report', 'title': 123},
+        {'url': 'javascript:alert(1)'},
+    ])
+    _, citations = _read_fake_response(ai, stateful_ai_bot, payload)
+    assert citations == [
+        {'url': 'https://EXAMPLE.com/News', 'title': 'News'},
+        {'url': 'https://example.com/news', 'title': ''},
+        {'url': 'https://other.example/report', 'title': ''},
+    ]
+
+
+@pytest.mark.parametrize('url', [
+    None, 123, '', 'not-a-url', 'ftp://example.com/report', 'https:///report',
+    'https://example.com/bad path', 'https://example.com/bad\npath',
+    'https://example.com/bad\\path', 'https://example.com:bad/report',
+    'https://user:password@example.com/report', 'https://[broken/report',
+])
+def test_citations_reject_malformed_urls(ai, url):
+    assert ai._normalize_citations([{'url': url, 'title': 'bad'}]) == []
+
+
+@pytest.mark.parametrize('sender,nick', [
+    ('#chat', 'Alice'), ('#chat', 'Bob'), ('#elsewhere', 'Alice'), ('Alice', 'Alice'),
+])
+def test_worker_never_substitutes_cached_or_prose_sources(
+    ai, stateful_ai_bot, monkeypatch, sender, nick,
+):
+    bot = stateful_ai_bot
+    old_url = 'https://old.example/unrelated'
+    current_url = 'https://current.example/report'
+    bot.memory['grok_citation_cache'] = {'#chat': [{'url': old_url, 'title': 'Old'}]}
+    monkeypatch.setattr(ai.random, 'uniform', lambda *args: 0)
+    responses = iter([
+        ('First answer', [{'url': current_url, 'title': 'Current report'}]),
+        ('Unrelated answer https://invented.example/post', []),
+    ])
+    monkeypatch.setattr(ai, '_call_responses_api', lambda *args, **kwargs: next(responses))
+    trigger = _MessageTrigger(sender=sender)
+    trigger.nick = nick
+    task = dict(
+        bot=bot, trigger=trigger, messages=[{'role': 'user', 'content': 'show sources'}],
+        review_mode=False, is_pm=not sender.startswith('#'), bot_nick=bot.nick,
+        chan_lock=threading.Lock(), wants_sources=True, search_mode=True,
+    )
+    ai._api_worker(**task)
+    first_reply_count = len(bot.replies)
+    assert first_reply_count > 0
+    assert current_url in ' '.join(bot.replies)
+    ai._api_worker(**task)
+    second_reply = ' '.join(bot.replies[first_reply_count:])
+    assert 'Unrelated answer' in second_reply
+    assert 'no sources returned for this answer' in second_reply
+    assert current_url not in second_reply
+    assert old_url not in second_reply
+    assert 'invented.example' not in second_reply
+    assert 'Sources:' not in second_reply
+
+
+def test_repeat_retry_does_not_keep_discarded_answer_citations(ai, stateful_ai_bot, monkeypatch):
+    bot = stateful_ai_bot
+    monkeypatch.setattr(ai.random, 'uniform', lambda *args: 0)
+    monkeypatch.setattr(ai, '_recent_own_lines', lambda *args: ['previous answer'])
+    responses = iter([
+        ('previous answer', [{'url': 'https://discarded.example/report', 'title': 'Discarded'}]),
+        ('A completely different response', []),
+    ])
+    monkeypatch.setattr(ai, '_call_responses_api', lambda *args, **kwargs: next(responses))
+    ai._api_worker(
+        bot=bot, trigger=_MessageTrigger(sender='#chat'),
+        messages=[{'role': 'user', 'content': 'show sources'}],
+        review_mode=False, is_pm=False, bot_nick=bot.nick,
+        chan_lock=threading.Lock(), wants_sources=True, search_mode=True,
+    )
+    reply = ' '.join(bot.replies)
+    assert 'A completely different response' in reply
+    assert 'no sources returned for this answer' in reply
+    assert 'discarded.example' not in reply
+
+
+# --- $aipardon --------------------------------------------------------------
+
+def test_aipardon_clears_speaker_keyed_strikes(ai, monkeypatch):
+    out = []
+    bot = SimpleNamespace(memory={'grok_flood': {'local:bob': {'strikes': [1]}, 'otherNet:bob': {'strikes': [1]},
+                                                  'local:carol': {'strikes': [1]}}},
+                          reply=out.append)
+    monkeypatch.setattr(ai, '_is_admin', lambda b, t: True)
+    trig = SimpleNamespace(nick='admin', group=lambda n=0: {3: 'Bob'}.get(n))
+    ai.aipardon(bot, trig)
+    assert out[-1] == 'Cleared AI strikes for bob.'
+    assert set(bot.memory['grok_flood']) == {'local:carol'}
+    ai.aipardon(bot, trig)
+    assert out[-1] == 'bob had no AI strikes.'
