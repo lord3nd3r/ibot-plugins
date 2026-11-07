@@ -153,6 +153,207 @@ def get_channel_karma(db, target, channel):
         return 0
 
 
+# Global-only milestone callouts. Same rungs as moo, both directions.
+# The nick value records rungs that were actually announced (schema v2),
+# not rungs we merely inferred. A missing record, and the older v1
+# {pos, neg} seed, both mean "nothing has been announced". The next real
+# karma change says the single highest rung the new global total already
+# qualifies for. Nothing is broadcast at startup.
+_karma_state_lock = threading.Lock()
+KARMA_MILESTONE_LEVELS = (1, 10, 50, 100, 500, 1000, 2000, 5000, 10000)
+KARMA_MILESTONE_KEY = 'karma_milestones'
+KARMA_MILESTONE_VERSION = 2
+POSITIVE_KARMA_MILESTONES = {
+    1: "First positive karma. A moth filed you under 'possibly nice' and then forgot.",
+    10: "Karma Adept. A vending machine bowed and refunded a coin nobody inserted.",
+    50: "Certified Benign Oddity. The county fair pinned a ribbon to a cloud shaped like your nick.",
+    100: "Civic Darling. Shopping carts are returning themselves and claiming it was your idea.",
+    500: "Regional Delight. Wayward balloons rewrote their flight plans to swing past your nick.",
+    1000: "You are worshipped by malfunctioning satellites.",
+    2000: "Orbital choir. The malfunctioning satellites formed a choir and the only lyric is your nick.",
+    5000: "Minor celestial appointment. A spare moon listed you as a reference and put gravity under hobbies.",
+    10000: (
+        "Karma supernova. You are worshipped by malfunctioning satellites, "
+        "and the sun requested an autograph in ultraviolet."
+    ),
+}
+NEGATIVE_KARMA_MILESTONES = {
+    1: "First negative karma. A stapler sighed and opened a file it hopes to lose.",
+    10: "Petty nuisance. The office plants voted to look slightly the other way.",
+    50: "Officially inconvenient. A middle manager stamped your aura 'see attached' and left for lunch.",
+    100: "Civic grumble. Three pigeons and a parking meter co-signed a complaint in triplicate.",
+    500: "Municipal headache. Your nick now requires a traffic cone, a pamphlet, and one bored clerk.",
+    1000: "You have been legally classified as a municipal sewage incident.",
+    2000: "Regional apologies desk. An intern was hired solely to regret you, with carbon copies.",
+    5000: "Cartographic warning. Mapmakers added you as a smell on the windward side of the county.",
+    10000: (
+        "Planetary liability. You are legally classified as a municipal sewage incident, "
+        "now with extraterritorial jurisdiction and hold music."
+    ),
+}
+
+
+def _highest_milestone(magnitude):
+    """Largest rung already reached by a non-negative magnitude (0 if none)."""
+    reached = 0
+    magnitude = int(magnitude)
+    for level in KARMA_MILESTONE_LEVELS:
+        if magnitude >= level:
+            reached = level
+        else:
+            break
+    return reached
+
+
+def _parse_stored_int(raw):
+    if raw is None or isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    try:
+        return int(str(raw).replace('"', '').strip())
+    except (ValueError, TypeError):
+        return None
+
+
+def _load_announced(db, target):
+    """Return (ann_pos, ann_neg): highest rungs actually announced, else 0.
+
+    Schema v2 is ``{v: 2, ann_pos, ann_neg}``. The v1 dict ``{pos, neg}``
+    mixed silent seeds with real lines and is not treated as announced.
+    """
+    raw = db.get_nick_value(tools.Identifier(target), KARMA_MILESTONE_KEY)
+    if not isinstance(raw, dict) or raw.get('v') != KARMA_MILESTONE_VERSION:
+        return 0, 0
+
+    def one(key):
+        parsed = _parse_stored_int(raw.get(key))
+        if parsed is None or parsed < 0:
+            return 0
+        return parsed
+
+    return one('ann_pos'), one('ann_neg')
+
+
+def _save_announced(db, target, ann_pos, ann_neg):
+    db.set_nick_value(
+        tools.Identifier(target),
+        KARMA_MILESTONE_KEY,
+        {
+            'v': KARMA_MILESTONE_VERSION,
+            'ann_pos': int(ann_pos),
+            'ann_neg': int(ann_neg),
+        },
+    )
+
+
+def _karma_milestone_transition(old, new, ann_pos, ann_neg):
+    """One line for a real global change, from the new signed total.
+
+    ``ann_pos`` / ``ann_neg`` are rungs already announced (0 if none).
+    A score above zero can catch up or newly reach a positive rung; a score
+    below zero can do the same on the negative ladder. Zero has no rung.
+    Only the highest eligible unannounced rung is returned. ``kind`` is
+    ``new`` when this change crossed that rung, or ``recognition`` when the
+    nick was already there. Returns ``(event, ann_pos, ann_neg)`` where
+    event is ``(direction, threshold, kind)`` or None. A no-op (``new == old``)
+    never announces. Watermarks only move upward.
+    """
+    old = int(old)
+    new = int(new)
+    ann_pos = int(ann_pos or 0)
+    ann_neg = int(ann_neg or 0)
+    if new == old:
+        return None, ann_pos, ann_neg
+
+    if new > 0:
+        threshold = _highest_milestone(new)
+        if threshold > ann_pos:
+            kind = 'new' if old < threshold else 'recognition'
+            return ('positive', threshold, kind), threshold, ann_neg
+    elif new < 0:
+        threshold = _highest_milestone(-new)
+        if threshold > ann_neg:
+            kind = 'new' if old > -threshold else 'recognition'
+            return ('negative', threshold, kind), ann_pos, threshold
+    return None, ann_pos, ann_neg
+
+
+def _format_karma_milestone(target, direction, threshold, score, kind='new'):
+    table = POSITIVE_KARMA_MILESTONES if direction == 'positive' else NEGATIVE_KARMA_MILESTONES
+    blurb = table[threshold]
+    badge = '🎉' if direction == 'positive' else '📉'
+    signed = threshold if direction == 'positive' else -threshold
+    shown = f"{signed:+,}"
+    if kind == 'recognition':
+        return (
+            f"{badge} Karma recognition for {target} ({shown} global, already there; "
+            f"now {int(score):+,}): {blurb}"
+        )
+    if int(score) == signed:
+        return f"{badge} Karma milestone for {target} ({shown} global): {blurb}"
+    return (
+        f"{badge} Karma milestone for {target} ({shown} global): {blurb} "
+        f"(now {int(score):+,})"
+    )
+
+
+def _commit_global_unlocked(db, target, new):
+    """Set global karma and, on a real change, announce at most one rung.
+
+    Does not touch per-channel karma. Caller holds the lock.
+    """
+    old = get_karma(db, target)
+    new = int(new)
+    ann_pos, ann_neg = _load_announced(db, target)
+    event, ann_pos2, ann_neg2 = _karma_milestone_transition(old, new, ann_pos, ann_neg)
+    if new != old:
+        set_karma(db, target, new)
+    if (ann_pos2, ann_neg2) != (ann_pos, ann_neg):
+        _save_announced(db, target, ann_pos2, ann_neg2)
+    if event is None:
+        return new, None
+    direction, threshold, kind = event
+    return new, _format_karma_milestone(target, direction, threshold, new, kind)
+
+
+def _apply_karma_delta(db, target, channel, delta):
+    """Apply one global delta and the same per-channel delta.
+
+    Returns ``(new_global, channel_karma, milestone_line or None)``.
+    Serialized so overlapping votes cannot double-apply or double-announce.
+    """
+    delta = int(delta)
+    with _karma_state_lock:
+        old = get_karma(db, target)
+        new, line = _commit_global_unlocked(db, target, old + delta)
+        add_channel_karma(db, target, channel, delta)
+        return new, get_channel_karma(db, target, channel), line
+
+
+def _assign_global_karma(db, target, value):
+    """Set global karma to an absolute value (setkarma). Channel karma is unchanged."""
+    with _karma_state_lock:
+        return _commit_global_unlocked(db, target, int(value))
+
+
+def _rollback_applied_karma(db, target, channel, events):
+    """Undo applied flood deltas. Does not announce or rewind milestone watermarks."""
+    rolled = 0
+    with _karma_state_lock:
+        for event in events:
+            if not event.get('applied'):
+                continue
+            reverse_delta = 1 if event['direction'] == '--' else -1
+            set_karma(db, target, get_karma(db, target) + reverse_delta)
+            add_channel_karma(db, target, channel, reverse_delta)
+            event['applied'] = False
+            rolled += 1
+        restored_global = get_karma(db, target)
+        restored_chan = get_channel_karma(db, target, channel)
+    return rolled, restored_global, restored_chan
+
+
 def format_time_remaining(seconds):
     seconds = int(seconds)
     if seconds < 60:
@@ -398,21 +599,12 @@ def _handle_karma_flood(bot, target, channel, trigger, flood_events):
         for host_entry in all_hosts:
             bot.memory['karma_flood_banned_hosts'].add(host_entry)
 
-    # Rollback all applied karma damage from the flood window
-    rolled_back = 0
+    # Rollback applied karma. Watermarks stay put so a reversed crossing
+    # cannot be celebrated again on the way back up or down.
     target_str = str(target)
-    for event in flood_events:
-        if event.get('applied'):
-            reverse_delta = 1 if event['direction'] == '--' else -1
-            new_global = get_karma(bot.db, target_str) + reverse_delta
-            set_karma(bot.db, target_str, new_global)
-            add_channel_karma(bot.db, target_str, chan, reverse_delta)
-            event['applied'] = False
-            rolled_back += 1
-
-    # Get restored karma values for the announcement
-    restored_global = get_karma(bot.db, target_str)
-    restored_chan = get_channel_karma(bot.db, target_str, chan)
+    rolled_back, restored_global, restored_chan = _rollback_applied_karma(
+        bot.db, target_str, chan, flood_events
+    )
 
     # Announce (rate-limited)
     unique_attackers = len(all_hosts)
@@ -552,8 +744,9 @@ def karma_increment_decrement(bot, trigger):
 
         # Apply karma (sign is '++' or '--' from the new regex)
         delta = 1 if sign == '++' else -1
-        new_global = get_karma(bot.db, target) + delta
-        set_karma(bot.db, target, new_global)
+        new_global, chan_karma, milestone = _apply_karma_delta(
+            bot.db, target, trigger.sender, delta
+        )
         karma_applied = True
 
         # Mark flood event as applied (for potential rollback later)
@@ -570,12 +763,12 @@ def karma_increment_decrement(bot, trigger):
             mood = "😬"
             lead = "⬇ Karma drop..."
 
-        add_channel_karma(bot.db, target, trigger.sender, delta)
-        chan_karma = get_channel_karma(bot.db, target, trigger.sender)
         bot.say(
             f"{lead} {target} {action_verb} {abs(delta)} karma {mood} "
             f"(🎯 {chan_karma} in {trigger.sender} | 🌐 {new_global} global)"
         )
+        if milestone:
+            bot.say(milestone)
 
     # Only consume cooldown if karma was actually applied
     if karma_applied:
@@ -619,6 +812,7 @@ def cmd_karma(bot, trigger):
             "• .karmatop / .ktop — Global top karma",
             "• .karmabottom / .kbottom — Global lowest karma",
             "• .setkarma <nick> <value> — OP-only",
+            "• Global milestones — one absurd extra line for the highest global rung not yet announced",
             "",
             "⏳ Cooldown: You may give karma once every 10 minutes *per channel*.",
         ]
@@ -767,8 +961,10 @@ def setkarma(bot, trigger):
     except ValueError:
         return bot.reply("Karma value must be an integer. 🔢")
 
-    set_karma(bot.db, target, value)
+    _assigned, milestone = _assign_global_karma(bot.db, target, value)
     bot.say(f"🛠️ {target}'s karma has been set to {value}.")
+    if milestone:
+        bot.say(milestone)
 
 
 # ──────────────────────────────────────────────────────────────

@@ -284,20 +284,25 @@ Clear any dynamic personalities and return the bot to its default configuration:
 
 ## 🕐 Time & Date Queries
 
-Ask the bot about the current time or date and it responds **instantly with the exact time** from your saved timezone preferences — no AI involved, no jokes, just the real answer. Time queries **bypass rate-limiting** so you can always get a fresh answer.
+Ask the bot the time or date and it answers from the clock, not from the model and not from earlier chat. The instant is `datetime.now(UTC)` converted with `zoneinfo`. A saved preference selects the IANA zone (`America/Chicago`). The abbreviation on the reply is that zone's name **right now** (`CST` in November, `CDT` in July). A label stored when the preference was set (`CDT`) is not printed and does not need to be cleared.
 
-**Trigger phrases:**
-- `what time is it`, `what's the time`, `current time`
-- `what's the date`, `what day is it`, `today's date`
+Place and zone questions use the same clock when the name is recognized (`Japan`, `Tokyo`, `Sydney`, `Sydney, Australia`, `UTC`, `Europe/Paris`, …). Punctuation does not matter. A short follow-up is a clock only when it names one of those places:
+
+- `what time is it?` — your zone
+- `what about in UTC?` / `and in Japan?` / `in Japan, what is the time and date?`
+- `what time is it in Sydney Australia?` and the same line with a comma
+
+`what about in the movie?` is ordinary chat, not a clock. If an explicit time question names a place the bot does not know, it says so and does **not** answer in your zone. `CST`, `IST`, `AST`, `BST`, `GST`, and whole countries with several zones (`Australia`, `USA`) are called ambiguous instead of guessed. Sunrise and sunset still go to the model.
+
+Local clock replies do not enter the AI queue, so a backed-up channel does not drop them. Flood strikes and a 1.5 second repeat guard still apply. The cause of the 7 Nov 2026 Sydney silence (no reply, then a later successful Sydney question) was not in the IRC raw log and is not claimed to be fixed by a particular gate; those questions are simply no longer model calls.
 
 **Examples:**
 ```
 Grok: what time is it?
-Grok: what's today's date?
-Grok: what day is it?
+Grok: what about in UTC?
+Grok: and in Japan?
+Grok: what time is it in Sydney, Australia?
 ```
-
-> **Note:** Short time queries (≤8 words) go directly to a local clock response. Longer messages that happen to mention time still go through the AI.
 
 ### Setting Your Timezone
 
@@ -510,8 +515,8 @@ Bot admins are exempt from all of these.
 | Burst strikes | more than 5 AI requests per 60s per user | Warning and 60s pause (strike); the 3rd strike within 24h ignores the user for 24 hours. `$aipardon <nick>` clears it |
 | Per user | 8 AI requests per 60s | Extra requests are dropped; one private "slow down" notice per window (never for relayed users) |
 | Per channel | 20 AI requests per 60s | Extra requests are dropped silently |
-| Pending per channel | 3 queued or in-flight | Extra requests are dropped |
-| Stale replies | 25s chat / 75s search & review / 15s chime-in | A reply not ready in time, or superseded by the same speaker's newer request, is dropped |
+| Pending per channel | 3 queued or in-flight | Extra AI requests are dropped. The user gets one private notice every 30s. Local clock answers do not use this queue |
+| Stale replies | 25s chat / 75s search & review / 15s chime-in | A reply not ready in time, or superseded by the same speaker's newer request, is dropped. A direct request also gets one private notice every 30s. An empty model reply does the same |
 
 The burst check runs first, so in practice a user who sends 6 AI requests within 60s gets a strike before reaching the 8-per-minute limit. Replies in one channel go out in request order.
 
@@ -519,7 +524,9 @@ The burst check runs first, so in practice a user who sends 6 AI requests within
 
 **Other AI bots** (`ai_bot_nicks`): the bot never chimes in on them and does not answer them with API error messages.
 
-**Addressed vs. mentioned:** the bot replies when a line is addressed to it (`glitchy: …`, `glitchy …`, `hey glitchy …`), not when it is only talked about (`so and so is glitchy`), using the `intent_check = heuristic` rules.
+**Addressed vs. mentioned:** the bot replies when a line is addressed to it (`glitchy: …`, `glitchy …`, `hey glitchy …`, `Welcome back glitchy!`, `thanks glitchy`, and a leading `glitchy and in Japan?`). It stays quiet when the nick is only discussed (`so and so is glitchy`, `the bot glitchy is acting up`, `glitchy and alice were both in here`). A leading nick that is still rejected is logged as `AI address reject (leading nick)` with the speaker and channel, not the line text.
+
+**Drop diagnostics.** Flood pauses, a full pending queue, a stale or superseded reply, and an empty model body are logged on the process logger `Grok` as `AI request dropped` / `AI direct request dropped` with a reason, speaker, and channel. They are not written to the IRC raw log. A direct (not relayed, not a chime-in) pending, stale, or empty result also sends one private NOTICE at most every 30 seconds. If the bot is started without a captured process log — on boston only `~/ibot/logs/glitchy.raw.log` is kept today — those logger lines are not saved anywhere.
 
 ---
 

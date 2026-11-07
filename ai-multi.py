@@ -386,6 +386,301 @@ _FMT_SET_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Place/zone names answered from zoneinfo. No network lookup.
+# Ambiguous abbreviations are refused instead of guessing the user's zone.
+_PLACE_ZONES = {
+    'utc': 'UTC', 'gmt': 'UTC', 'zulu': 'UTC', 'universal': 'UTC',
+    'japan': 'Asia/Tokyo', 'tokyo': 'Asia/Tokyo', 'osaka': 'Asia/Tokyo',
+    'kyoto': 'Asia/Tokyo', 'jst': 'Asia/Tokyo',
+    'sydney': 'Australia/Sydney', 'sydney australia': 'Australia/Sydney',
+    'melbourne': 'Australia/Melbourne', 'hobart': 'Australia/Hobart',
+    'brisbane': 'Australia/Brisbane', 'perth': 'Australia/Perth',
+    'adelaide': 'Australia/Adelaide', 'darwin': 'Australia/Darwin',
+    'auckland': 'Pacific/Auckland', 'wellington': 'Pacific/Auckland',
+    'london': 'Europe/London', 'uk': 'Europe/London', 'britain': 'Europe/London',
+    'england': 'Europe/London', 'gmt london': 'Europe/London',
+    'paris': 'Europe/Paris', 'france': 'Europe/Paris',
+    'berlin': 'Europe/Berlin', 'germany': 'Europe/Berlin',
+    'rome': 'Europe/Rome', 'italy': 'Europe/Rome',
+    'madrid': 'Europe/Madrid', 'spain': 'Europe/Madrid',
+    'amsterdam': 'Europe/Amsterdam', 'netherlands': 'Europe/Amsterdam',
+    'dublin': 'Europe/Dublin', 'ireland': 'Europe/Dublin',
+    'lisbon': 'Europe/Lisbon', 'portugal': 'Europe/Lisbon',
+    'moscow': 'Europe/Moscow', 'stockholm': 'Europe/Stockholm',
+    'oslo': 'Europe/Oslo', 'copenhagen': 'Europe/Copenhagen',
+    'helsinki': 'Europe/Helsinki', 'warsaw': 'Europe/Warsaw',
+    'vienna': 'Europe/Vienna', 'zurich': 'Europe/Zurich',
+    'athens': 'Europe/Athens', 'istanbul': 'Europe/Istanbul',
+    'seoul': 'Asia/Seoul', 'korea': 'Asia/Seoul', 'south korea': 'Asia/Seoul',
+    'beijing': 'Asia/Shanghai', 'shanghai': 'Asia/Shanghai', 'china': 'Asia/Shanghai',
+    'hong kong': 'Asia/Hong_Kong', 'taipei': 'Asia/Taipei', 'taiwan': 'Asia/Taipei',
+    'singapore': 'Asia/Singapore', 'bangkok': 'Asia/Bangkok', 'thailand': 'Asia/Bangkok',
+    'dubai': 'Asia/Dubai', 'delhi': 'Asia/Kolkata', 'mumbai': 'Asia/Kolkata',
+    'kolkata': 'Asia/Kolkata', 'india': 'Asia/Kolkata',
+    'manila': 'Asia/Manila', 'jakarta': 'Asia/Jakarta',
+    'new york': 'America/New_York', 'nyc': 'America/New_York',
+    'boston': 'America/New_York', 'miami': 'America/New_York',
+    'atlanta': 'America/New_York', 'detroit': 'America/New_York',
+    'washington': 'America/New_York', 'washington dc': 'America/New_York',
+    'chicago': 'America/Chicago', 'dallas': 'America/Chicago',
+    'houston': 'America/Chicago', 'minneapolis': 'America/Chicago',
+    'denver': 'America/Denver', 'phoenix': 'America/Phoenix',
+    'los angeles': 'America/Los_Angeles',
+    'san francisco': 'America/Los_Angeles', 'seattle': 'America/Los_Angeles',
+    'las vegas': 'America/Los_Angeles',
+    'anchorage': 'America/Anchorage', 'alaska': 'America/Anchorage',
+    'honolulu': 'Pacific/Honolulu', 'hawaii': 'Pacific/Honolulu',
+    'toronto': 'America/Toronto', 'vancouver': 'America/Vancouver',
+    'mexico city': 'America/Mexico_City',
+    'sao paulo': 'America/Sao_Paulo', 'buenos aires': 'America/Argentina/Buenos_Aires',
+    'johannesburg': 'Africa/Johannesburg', 'cairo': 'Africa/Cairo',
+    'lagos': 'Africa/Lagos', 'nairobi': 'Africa/Nairobi',
+    'est': 'America/New_York', 'edt': 'America/New_York', 'et': 'America/New_York',
+    'eastern': 'America/New_York',
+    'cdt': 'America/Chicago', 'ct': 'America/Chicago', 'central': 'America/Chicago',
+    'mst': 'America/Denver', 'mdt': 'America/Denver', 'mt': 'America/Denver',
+    'mountain': 'America/Denver',
+    'pst': 'America/Los_Angeles', 'pdt': 'America/Los_Angeles',
+    'pt': 'America/Los_Angeles', 'pacific': 'America/Los_Angeles',
+    'aest': 'Australia/Sydney', 'aedt': 'Australia/Sydney',
+}
+_AMBIGUOUS_PLACES = {
+    'cst': 'US Central, China, or Cuba',
+    'ist': 'India, Israel, or Ireland',
+    'ast': 'Atlantic or Arabia',
+    'bst': 'Britain or Bangladesh',
+    'gst': 'Gulf or South Georgia',
+    'australia': 'Sydney, Melbourne, Brisbane, Perth, and others',
+    'united states': 'a city — the US has several zones',
+    'usa': 'a city — the US has several zones',
+    'us': 'a city — the US has several zones',
+    'canada': 'a city — Canada has several zones',
+    'russia': 'a city — Russia has several zones',
+    'brazil': 'a city — Brazil has several zones',
+    'indonesia': 'a city — Indonesia has several zones',
+}
+_IANA_LOWER = None
+_CLOCK_SUN_RE = re.compile(
+    r'\b(?:sun\s*rise|sun\s*set|sunrise|sunset|dawn|dusk|golden\s+hour|first\s+light|last\s+light)\b',
+    re.IGNORECASE,
+)
+_CLOCK_FOLLOW_RE = re.compile(
+    r'^(?:and\s+)?(?:(?:what|how)\s+about\s+)?(?:the\s+time\s+)?(?:in|for)\s+(.+?)\s*\??$',
+    re.IGNORECASE,
+)
+_CLOCK_ABOUT_RE = re.compile(
+    r'^(?:and\s+)?(?:what|how)\s+about\s+(.+?)\s*\??$',
+    re.IGNORECASE,
+)
+
+
+def _canonical_zone(name):
+    """Return an IANA name for case-insensitive input, or None."""
+    global _IANA_LOWER
+    if _IANA_LOWER is None:
+        from zoneinfo import available_timezones
+        _IANA_LOWER = {zone.lower(): zone for zone in available_timezones()}
+        _IANA_LOWER['utc'] = 'UTC'
+    key = str(name or '').strip().lower().replace(' ', '_')
+    return _IANA_LOWER.get(key)
+
+
+def _normalize_place(text):
+    text = str(text or '').strip().strip('?').strip()
+    text = text.replace(',', ' ').replace('.', '')
+    text = re.sub(r'[^\w\s/+-]', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip().lower()
+    text = re.sub(r'^(?:the|a|an)\s+', '', text)
+    return text
+
+
+def _lookup_place(raw):
+    """('zone', iana), ('ambiguous', hint), or None."""
+    key = _normalize_place(raw)
+    if not key or len(key) > 80:
+        return None
+    if key in _AMBIGUOUS_PLACES:
+        return ('ambiguous', _AMBIGUOUS_PLACES[key])
+    zone = _PLACE_ZONES.get(key)
+    if zone:
+        return ('zone', zone)
+    iana = _canonical_zone(key)
+    if iana:
+        return ('zone', iana)
+    return None
+
+
+def _explicit_clock_place(text):
+    """Place phrase from an explicit time/date question, or None if it names none."""
+    m = re.search(
+        r'\bin\s+(.+?)\s*,\s*(?:what|when)\b',
+        text,
+        re.IGNORECASE,
+    )
+    if m:
+        return m.group(1)
+    m = re.search(r'\bin\s+(.+)$', text, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _clock_query(text):
+    """Classify a clock request.
+
+    Returns ('home', None), ('zone', iana), ('ambiguous', hint),
+    ('unknown', place), or None when this is not a clock request.
+    A short "what about in …" is a clock only when the object is a known
+    or ambiguous zone. Anything else stays ordinary chat. An explicit time
+    question that names an unknown place is 'unknown' so we do not answer
+    in the user's own zone.
+    """
+    text = (text or '').strip()
+    if not text or _CLOCK_SUN_RE.search(text):
+        return None
+    if _is_time_question(text):
+        place = _explicit_clock_place(text)
+        if not place:
+            return ('home', None)
+        if _normalize_place(place) in {'here', 'local', 'my timezone', 'my time', 'my zone'}:
+            return ('home', None)
+        hit = _lookup_place(place)
+        if hit is None:
+            return ('unknown', _normalize_place(place)[:40])
+        return hit
+    follow = _CLOCK_FOLLOW_RE.match(text) or _CLOCK_ABOUT_RE.match(text)
+    if not follow:
+        return None
+    hit = _lookup_place(follow.group(1))
+    if not hit:
+        return None
+    return hit
+
+
+def _zone_abbrev(dt):
+    """Abbreviation for this instant (CST vs CDT), not a stored label."""
+    try:
+        name = dt.tzname()
+    except Exception:
+        name = None
+    if name and name not in ('LMT',):
+        return name
+    rendered = dt.strftime('%Z')
+    return rendered or 'UTC'
+
+
+def _format_clock(dt, hour12=False):
+    clock = dt.strftime('%I:%M %p' if hour12 else '%H:%M')
+    return f"{dt.strftime('%A, %B %d, %Y')} at {clock} {_zone_abbrev(dt)}"
+
+
+def _format_clock_in_zone(moment_utc, zone_name, hour12=False):
+    dt = moment_utc.astimezone(ZoneInfo(zone_name))
+    return _format_clock(dt, hour12)
+
+
+def _answer_local_clock(bot, trigger, user_message, now_utc=None):
+    """Answer a clock request from zoneinfo. True if this message was handled.
+
+    Does not call the model and does not read the channel log.
+    """
+    query = _clock_query(user_message)
+    if query is None:
+        return False
+    kind, payload = query
+    if now_utc is None:
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+    if now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=datetime.timezone.utc)
+    try:
+        prefs = _db_get_user_pref(bot, trigger.nick) or {}
+    except Exception:
+        prefs = {}
+    hour12 = str(prefs.get('time_fmt') or '24') == '12'
+    cache = None
+    try:
+        cache = bot.memory.get('grok_last') if getattr(bot, 'memory', None) else None
+    except Exception:
+        cache = None
+    if cache is not None and cache.check_and_set(
+        ('clock', _speaker_key(trigger), str(getattr(trigger, 'sender', ''))),
+        time.monotonic(),
+        1.5,
+    ):
+        _log(bot).info(
+            'local clock debounced for %s in %s',
+            _speaker_key(trigger), getattr(trigger, 'sender', ''),
+        )
+        return True
+    if kind == 'ambiguous':
+        text = f"That name is ambiguous ({payload}). Name a city."
+        zone = 'ambiguous'
+    elif kind == 'unknown':
+        shown = payload or 'that place'
+        text = (
+            f"I don't know the timezone for {shown}. "
+            "Name a city, or an IANA zone like Australia/Sydney."
+        )
+        zone = 'unknown'
+    else:
+        if kind == 'home':
+            zone = prefs.get('tz_iana') or 'UTC'
+            try:
+                ZoneInfo(zone)
+            except Exception:
+                zone = 'UTC'
+        else:
+            zone = payload
+        try:
+            text = _format_clock_in_zone(now_utc, zone, hour12)
+        except Exception:
+            _log(bot).info('local clock failed for zone %s', zone)
+            text = "I couldn't read that timezone. Name a city."
+            zone = 'invalid'
+    _log(bot).info(
+        'local clock for %s in %s zone=%s',
+        _speaker_key(trigger), getattr(trigger, 'sender', ''), zone,
+    )
+    try:
+        bot.say(text, trigger.sender)
+    except Exception:
+        _log(bot).exception('local clock say failed')
+    return True
+
+
+def _direct_drop_notice(bot, trigger, reason, notice, is_chimein=False):
+    """Log a silent drop of a direct request, and notice the user at most every 30s.
+
+    The notice is not sent for chime-ins, relays, or other bots. The log line
+    is the reason and the speaker only — not the message text.
+    """
+    try:
+        _log(bot).info(
+            'AI direct request dropped (%s) for %s in %s',
+            reason, _speaker_key(trigger), getattr(trigger, 'sender', ''),
+        )
+    except Exception:
+        pass
+    if is_chimein or not notice:
+        return
+    try:
+        if _is_relayed(trigger) or _is_ai_bot(bot, getattr(trigger, 'nick', '')):
+            return
+    except Exception:
+        return
+    try:
+        now = time.time()
+        box = bot.memory.setdefault('grok_drop_notice', {})
+        key = (_speaker_key(trigger), reason.split()[0])
+        if now - float(box.get(key, 0) or 0) < 30:
+            return
+        if len(box) > 2000:
+            box.clear()
+        box[key] = now
+        bot.notice(notice, str(trigger.nick))
+    except Exception:
+        pass
+
 # Bounded queue and worker threads to process API requests without unbounded threads
 API_TASK_QUEUE = queue.Queue(maxsize=API_QUEUE_MAXSIZE)
 # One event per plugin load. Shutdown sets it. The next load uses a new event,
@@ -2670,7 +2965,11 @@ def _api_worker(*, bot, trigger, messages, review_mode, is_pm, bot_nick, chan_lo
         _why = _drop_reason()
         if _why:
             _bump_ai_stat(bot, 'stale_dropped')
-            _log(bot).info('AI request dropped before API call: %s (%s in %s)', _why, trigger.nick, trigger.sender)
+            _direct_drop_notice(
+                bot, trigger, _why,
+                "That request expired before I could answer. Ask again if you still want it.",
+                is_chimein=is_chimein,
+            )
             return
         # Circuit breaker: pause a channel after repeated failures, but let a
         # probe request through once the cooldown elapses so it can recover.
@@ -2873,6 +3172,12 @@ def _api_worker(*, bot, trigger, messages, review_mode, is_pm, bot_nick, chan_lo
 
         if not reply:
             _log(bot).warning('AI API returned empty reply (backend=%s)', _chat_backend)
+            if not _cancelled():
+                _direct_drop_notice(
+                    bot, trigger, 'empty reply',
+                    "I didn't get an answer back. Try again in a moment.",
+                    is_chimein=is_chimein,
+                )
             return
 
         reply = sanitize_reply(bot, trigger, reply)
@@ -3043,7 +3348,11 @@ def _api_worker(*, bot, trigger, messages, review_mode, is_pm, bot_nick, chan_lo
         _why = _drop_reason()
         if _why:
             _bump_ai_stat(bot, 'stale_dropped')
-            _log(bot).info('AI reply dropped before send: %s (%s in %s)', _why, trigger.nick, dest_channel)
+            _direct_drop_notice(
+                bot, trigger, _why,
+                "That request expired before I could answer. Ask again if you still want it.",
+                is_chimein=is_chimein,
+            )
             return
 
         _log(bot).info('Grok reply -> %s (len=%d, review=%s, chimein=%s)', dest_channel, len(final_reply), review_mode, is_chimein)
@@ -4501,6 +4810,10 @@ def _address_verdict(line, bot_nick):
     # Determiner/adjective immediately before nick — using nick as descriptor.
     if re.search(rf'\b(?:that|this|the|a|an|some|more|very|too|so|really|pretty|quite)\s+{re.escape(nick)}\b', lower):
         return 'no'
+    # "the bot glitchy is acting up" — nick is a name being discussed, not hailed.
+    if re.search(rf'\b(?:the|a|an|that|this)\s+(?:\w+\s+){{1,3}}{re.escape(nick)}\b', lower):
+        if not re.match(rf'^\s*(?:hey|hi|yo|hello)?\s*{re.escape(bot_nick)}\b', s, re.IGNORECASE):
+            return 'no'
     # Preposition before nick — talking about the bot in passing.
     if re.search(rf'\b(?:about|with|from|like|for|than|of)\s+(?:\w+\s+)*{re.escape(nick)}\b', lower):
         if not re.match(rf'^\s*{re.escape(nick)}', lower) and not re.search(rf'{re.escape(nick)}\s*\W*$', lower):
@@ -4522,9 +4835,24 @@ def _address_verdict(line, bot_nick):
         if not re.match(rf'^\s*(?:hey|hi|yo|hello)?\s*{re.escape(bot_nick)}\s*[:,>»›]\s+', s, re.IGNORECASE):
             return 'no'
 
-    if (re.search(rf'\b{re.escape(nick)}\s+(?:and|or)\s+\w+\b', lower) or
-        re.search(rf'\b\w+\s+(?:and|or)\s+{re.escape(nick)}\b', lower)):
-        if not re.match(rf'^\s*(?:hey|hi|yo|hello)?\s*{re.escape(bot_nick)}\s*[:,>»›-]', s, re.IGNORECASE):
+    # "glitchy and alice …" is two subjects, not a direct address.
+    # "glitchy and in Japan?" starts with the nick and a function word, so it is.
+    _and_func = {
+        'in', 'on', 'at', 'for', 'to', 'with', 'from', 'about', 'of', 'the', 'a', 'an',
+        'what', 'whats', 'how', 'when', 'where', 'why', 'who', 'which',
+        'my', 'your', 'our', 'this', 'that', 'it', 'there', 'here', 'please',
+    }
+    _lead_nick = re.match(
+        rf'^\s*(?:hey|hi|yo|hello)?\s*{re.escape(bot_nick)}\b', s, re.IGNORECASE)
+    _nick_and = re.search(rf'\b{re.escape(nick)}\s+(?:and|or)\s+(\w+)\b', lower)
+    _and_nick = re.search(rf'\b(\w+)\s+(?:and|or)\s+{re.escape(nick)}\b', lower)
+    if _nick_and or _and_nick:
+        _direct_func = bool(
+            _lead_nick and _nick_and and _nick_and.group(1) in _and_func)
+        if not _direct_func and not re.match(
+            rf'^\s*(?:hey|hi|yo|hello)?\s*{re.escape(bot_nick)}\s*[:,>»›-]',
+            s, re.IGNORECASE,
+        ):
             return 'no'
 
     if '?' in s and re.search(rf'\b{re.escape(bot_nick)}\b', s, re.IGNORECASE):
@@ -6333,6 +6661,14 @@ def handle(bot, trigger, _intent_decided=False):
                     threading.Thread(target=_resolve_intent, daemon=True, name='grok-intent').start()
                 return
             if _verdict != 'yes':
+                if re.match(
+                    rf'^\s*(?:hey|hi|yo|hello)?\s*{re.escape(bot_nick)}\b',
+                    line, re.IGNORECASE,
+                ):
+                    _log(bot).info(
+                        'AI address reject (leading nick) for %s in %s',
+                        trigger.nick, trigger.sender,
+                    )
                 return
 
     if mentioned:
@@ -6884,6 +7220,14 @@ def handle(bot, trigger, _intent_decided=False):
     # Rate limit per-user-per-channel so one user's question doesn't block others.
     # time_mode gets a smaller debounce window to prevent double-dispatch.
     if _ai_flood_check(bot, trigger):
+        _log(bot).info(
+            'AI request dropped (flood) for %s in %s',
+            _speaker_key(trigger), trigger.sender,
+        )
+        return
+    # Local clock: real zone instant, not the model and not the API queue.
+    # Flood strikes above still apply. The AI rate gate and pending cap do not.
+    if _answer_local_clock(bot, trigger, user_message):
         return
     if _ai_rate_gate(bot, trigger):
         return
@@ -6919,27 +7263,16 @@ def handle(bot, trigger, _intent_decided=False):
             time_fmt = '%I:%M %p'
         else:
             time_fmt = '%H:%M'
-        tz_label = user_prefs.get('tz_label', user_tz)
-        now_str = now_dt.strftime(f'%A, %B %d, %Y at {time_fmt} {tz_label}')
+        tz_label = _zone_abbrev(now_dt)
+        now_str = f"{now_dt.strftime('%A, %B %d, %Y')} at {now_dt.strftime(time_fmt)} {tz_label}"
+        _utc_stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
     except Exception:
         # Fallback to UTC if timezone is invalid
+        _utc_stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
         now_str = datetime.datetime.now(datetime.timezone.utc).strftime('%A, %B %d, %Y at %H:%M UTC')
 
-    # For pure time/date queries, answer directly without hitting the API.
-    # Skip the shortcut if the question specifies a location (e.g. "what time is it in mesa arizona?")
-    # so the API can resolve the correct timezone for that place.
-    _time_is_location_query = time_mode and bool(
-        re.search(r'\bin\s+[a-z]', user_message, re.IGNORECASE)
-    )
-    # Skip the shortcut if the question is about sunrise/sunset/dawn/dusk — the
-    # user wants a computed answer, not the current time.
-    _time_needs_lookup = time_mode and bool(
-        re.search(r'\b(sun\s*rise|sun\s*set|sunrise|sunset|dawn|dusk|golden\s+hour|first\s+light|last\s+light)\b',
-                  user_message, re.IGNORECASE)
-    )
-    if time_mode and not _time_is_location_query and not _time_needs_lookup and len(user_message.split()) <= 8:
-        bot.say(now_str, trigger.sender)
-        return
+    # Sunrise/sunset still needs a computed lookup. Plain clocks already returned.
+    _time_needs_lookup = time_mode and bool(_CLOCK_SUN_RE.search(user_message))
     
     # Use per-channel system prompt if defined, otherwise fall back to the global one.
     _active_system_prompt = bot.config.ai_multi.system_prompt
@@ -6978,7 +7311,10 @@ def handle(bot, trigger, _intent_decided=False):
         {
             "role": "system",
             "content": (
-                f"Current date/time for {trigger.nick}: {now_str}. Use this ONLY if {trigger.nick} explicitly asks for the time or date in their message — do NOT volunteer it unprompted. "
+                f"Current absolute instant: {_utc_stamp}. In {trigger.nick}'s zone that is {now_str}. "
+                f"If you are asked for the time somewhere, convert this UTC instant. "
+                f"Clocks in the channel log are old and must not be reused. "
+                f"Do NOT volunteer the time unless it was asked for. "
                 f"Your IRC nick is '{bot_nick}'. You are answering {trigger.nick}. "
                 f"Do not end a reply with a nick, including {trigger.nick}. "
                 f"Mention a nick only when the sentence is about that person. "
@@ -7613,7 +7949,10 @@ def handle(bot, trigger, _intent_decided=False):
             exempt=_is_admin(bot, trigger))
         if _enq == 'capped':
             _bump_ai_stat(bot, 'pending_capped')
-            _log(bot).info('AI request dropped (channel busy) for %s in %s', _speaker_key(trigger), trigger.sender)
+            _direct_drop_notice(
+                bot, trigger, 'channel busy',
+                "Too many questions are already in flight here. Try again in a moment.",
+            )
             return
         # Reset chimein cooldown so talkback doesn't fire right after a direct response
         if not is_pm:

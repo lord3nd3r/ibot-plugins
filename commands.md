@@ -19,7 +19,7 @@ The examples use the **`$`** prefix (what the `glitchy` bot uses, `prefix = \$` 
 | [🛠️ Bot Admin](docs/botadmin.md) | `$restart`, `$breload`, `$bothelp` (other admin commands are in the ibot core) |
 | [🔍 IRC Oper Scanner](docs/operscan.md) | PM-only scanner to identify network/server IRC operators |
 | [🐄 Moo Counter](docs/moo.md) | Say moo to increment your counter, network leaderboards |
-| [⭐ Karma](docs/karma.md) | Inline `++` / `--` karma with per-channel & global tracking |
+| [⭐ Karma](docs/karma.md) | Inline `++` / `--` karma with per-channel & global tracking and absurd global milestone callouts |
 | [🧩 Trivia](docs/trivia.md) | Multi-player trivia with categories, hints, and streaks |
 | [🌤️ Weather](docs/weather.md) | Current weather, forecasts, alerts, and space weather |
 | [📈 Stocks](docs/stock.md) | Look up stocks by ticker or company name |
