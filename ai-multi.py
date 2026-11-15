@@ -280,14 +280,23 @@ _PERSONALITY_RESET_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Persistent memory: "remember X" stores facts, "forget X" removes them
+# Persistent memory: "remember X" stores facts, "forget X" removes them.
+# "save that …", "save: …", and "save <X> = <Y>" are the same store.
+# Bare "save me / save the world / save game" is ordinary chat.
 _REMEMBER_CMD_RE = re.compile(
     r'^remember\s+(?:that\s+)?(.+)',
     re.IGNORECASE | re.DOTALL,
 )
-# Conversational "remember" — NOT a command, let it go to the AI
+_SAVE_THAT_RE = re.compile(r'^save\s+that\s+(.+)$', re.IGNORECASE | re.DOTALL)
+_SAVE_COLON_RE = re.compile(r'^save\s*:\s*(.+)$', re.IGNORECASE | re.DOTALL)
+_SAVE_EQ_RE = re.compile(r'^save\s+(.+?\s*=\s*.+)$', re.IGNORECASE | re.DOTALL)
+# Conversational "remember" / "save that when…" — NOT a command
 _REMEMBER_SKIP_RE = re.compile(
     r'^remember\s+(?:when\b|how\b|the\s+time\b|that\s+time\b|that\s+one\s+time\b)',
+    re.IGNORECASE,
+)
+_SAVE_SKIP_RE = re.compile(
+    r'^save\s+that\s+(?:when\b|how\b|the\s+time\b|that\s+time\b|for\s+later\b)',
     re.IGNORECASE,
 )
 _FORGET_CMD_RE = re.compile(
@@ -349,7 +358,16 @@ def _personality_command_match(user_message):
     return match
 
 # Max persistent facts per user
-MAX_USER_FACTS = 200
+MAX_USER_FACTS = 500
+# Asker's facts in a chat prompt: matching lines first, then a short recent tail.
+FACT_CONTEXT_MAX_CHARS = 2500
+FACT_CONTEXT_OTHER_MAX = 25
+_FACT_STOPWORDS = frozenset(
+    'a an the is are was were be been being do does did doing what whats who how why when '
+    'where you your yours me my mine i im it its of to for in on at and or but if that this '
+    'with about from as by not no yes ok okay just like so than then them they he she his her '
+    'we our can could would should will shall may might must please hey'.split()
+)
 
 # Conversation rows in grok_user_history older than this get pruned
 HISTORY_RETENTION_DAYS = 30
@@ -459,6 +477,47 @@ _AMBIGUOUS_PLACES = {
     'brazil': 'a city — Brazil has several zones',
     'indonesia': 'a city — Indonesia has several zones',
 }
+# A trailing country counts only when the city's zone is one of these.
+# A wrong country ("Tokyo, France") is unknown, not a guess at the city.
+_COUNTRY_ZONES = {
+    'japan': frozenset({'Asia/Tokyo'}),
+    'uk': frozenset({'Europe/London'}),
+    'britain': frozenset({'Europe/London'}),
+    'england': frozenset({'Europe/London'}),
+    'france': frozenset({'Europe/Paris'}),
+    'germany': frozenset({'Europe/Berlin'}),
+    'italy': frozenset({'Europe/Rome'}),
+    'spain': frozenset({'Europe/Madrid'}),
+    'netherlands': frozenset({'Europe/Amsterdam'}),
+    'ireland': frozenset({'Europe/Dublin'}),
+    'portugal': frozenset({'Europe/Lisbon'}),
+    'korea': frozenset({'Asia/Seoul'}),
+    'south korea': frozenset({'Asia/Seoul'}),
+    'china': frozenset({'Asia/Shanghai'}),
+    'taiwan': frozenset({'Asia/Taipei'}),
+    'singapore': frozenset({'Asia/Singapore'}),
+    'thailand': frozenset({'Asia/Bangkok'}),
+    'india': frozenset({'Asia/Kolkata'}),
+    'alaska': frozenset({'America/Anchorage'}),
+    'hawaii': frozenset({'Pacific/Honolulu'}),
+    'australia': frozenset({
+        'Australia/Sydney', 'Australia/Melbourne', 'Australia/Hobart',
+        'Australia/Brisbane', 'Australia/Perth', 'Australia/Adelaide',
+        'Australia/Darwin',
+    }),
+    'united states': frozenset({
+        'America/New_York', 'America/Chicago', 'America/Denver',
+        'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage',
+        'Pacific/Honolulu',
+    }),
+    'canada': frozenset({'America/Toronto', 'America/Vancouver'}),
+    'russia': frozenset({'Europe/Moscow'}),
+    'brazil': frozenset({'America/Sao_Paulo'}),
+    'indonesia': frozenset({'Asia/Jakarta'}),
+    'mexico': frozenset({'America/Mexico_City'}),
+}
+_COUNTRY_ZONES['usa'] = _COUNTRY_ZONES['united states']
+_COUNTRY_ZONES['us'] = _COUNTRY_ZONES['united states']
 _IANA_LOWER = None
 _CLOCK_SUN_RE = re.compile(
     r'\b(?:sun\s*rise|sun\s*set|sunrise|sunset|dawn|dusk|golden\s+hour|first\s+light|last\s+light)\b',
@@ -494,6 +553,27 @@ def _normalize_place(text):
     return text
 
 
+def _lookup_city_country(key):
+    """Match 'tokyo japan' / 'new york usa'. None if it is not city + country.
+
+    A known city with the wrong country is 'mismatch' so the city is not used alone.
+    """
+    words = key.split()
+    if len(words) < 2:
+        return None
+    for i in range(len(words) - 1, 0, -1):
+        city = ' '.join(words[:i])
+        country = ' '.join(words[i:])
+        zone = _PLACE_ZONES.get(city)
+        allowed = _COUNTRY_ZONES.get(country)
+        if not zone or not allowed:
+            continue
+        if zone in allowed:
+            return ('zone', zone)
+        return 'mismatch'
+    return None
+
+
 def _lookup_place(raw):
     """('zone', iana), ('ambiguous', hint), or None."""
     key = _normalize_place(raw)
@@ -504,6 +584,11 @@ def _lookup_place(raw):
     zone = _PLACE_ZONES.get(key)
     if zone:
         return ('zone', zone)
+    qualified = _lookup_city_country(key)
+    if qualified == 'mismatch':
+        return None
+    if qualified:
+        return qualified
     iana = _canonical_zone(key)
     if iana:
         return ('zone', iana)
@@ -1148,6 +1233,7 @@ def shutdown(bot):
     workers = bot.memory.pop('grok_worker_threads', [])
     for t in workers:
         t.join(timeout=3.0)
+    _warn_live_workers(bot, workers)
 
     try:
         while not API_TASK_QUEUE.empty():
@@ -2994,16 +3080,16 @@ def _api_worker(*, bot, trigger, messages, review_mode, is_pm, bot_nick, chan_lo
 
         reply = None
         citations = None
-        temp = 0.95 if not review_mode else 0.90
-        max_toks = 900 if not review_mode else 800
+        _def_hit = _messages_have_saved_definition(messages)
         _unh_chan = None
+        _unhinged = False
         try:
-            # Unhinged channels get a little more randomness so roasts are less samey.
             _unh_chan = target_channel or (None if is_pm else trigger.sender)
-            if _unh_chan and _db_get_channel_unhinged(bot, _unh_chan):
-                temp = min(temp + 0.1, 1.1)
+            _unhinged = bool(_unh_chan and _db_get_channel_unhinged(bot, _unh_chan))
         except Exception:
             pass
+        temp = _request_temperature(review_mode, _unhinged, _def_hit)
+        max_toks = 900 if not review_mode else 800
 
         # ── Backend routing ────────────────────────────────────────────────────────────
         _cfg = bot.config.ai_multi
@@ -3532,8 +3618,7 @@ def _db_add_profile_fact(bot, nick, fact, updated_by):
                 facts = json.loads(row[0]) if row[0] else []
                 if fact not in facts:
                     facts.append(fact)
-                    if len(facts) > MAX_USER_FACTS:
-                        facts = facts[-MAX_USER_FACTS:]
+                    facts = _bounded_facts(facts)
                     c.execute(
                         'UPDATE grok_user_profiles SET facts = ?, last_updated = ?, updated_by = ? WHERE nick = ?',
                         (json.dumps(facts), now_ts, updated_by.lower(), nick.lower())
@@ -3583,8 +3668,305 @@ def _db_delete_user_profile(bot, nick):
         _log(bot).exception('Failed to delete profile for %s', nick)
         return False
 
-def _format_profile_for_context(nick, profile, include_facts=True):
-    """Format user profile data for inclusion in AI context."""
+def _bounded_facts(facts, limit=None):
+    """Keep the newest facts. Oldest are dropped once the cap is passed."""
+    limit = MAX_USER_FACTS if limit is None else int(limit)
+    facts = list(facts or [])
+    if len(facts) > limit:
+        return facts[-limit:]
+    return facts
+
+
+def _parse_memory_save(text):
+    """Fact text from remember/save, or None when the line is not a store command."""
+    text = (text or '').strip()
+    if not text or _REMEMBER_SKIP_RE.match(text) or _SAVE_SKIP_RE.match(text):
+        return None
+    match = _REMEMBER_CMD_RE.match(text)
+    if match:
+        return match.group(1).strip().rstrip('.')
+    for pattern in (_SAVE_THAT_RE, _SAVE_COLON_RE, _SAVE_EQ_RE):
+        match = pattern.match(text)
+        if match:
+            return match.group(1).strip().rstrip('.')
+    return None
+
+
+def _fact_stem(token):
+    for suffix, minimum in (('ing', 6), ('ed', 5), ('es', 5), ('ly', 5), ('s', 4)):
+        if len(token) >= minimum and token.endswith(suffix):
+            return token[:-len(suffix)]
+    return token
+
+
+def _fact_tokens(text):
+    tokens = set()
+    for raw in re.findall(r"[a-z0-9']+", (text or '').lower()):
+        if len(raw) < 3 or raw in _FACT_STOPWORDS:
+            continue
+        stem = _fact_stem(raw)
+        if len(stem) < 3 or stem in _FACT_STOPWORDS:
+            continue
+        tokens.add(stem)
+    return tokens
+
+
+def _fact_overlap_score(fact, query_tokens):
+    if not query_tokens:
+        return 0
+    return len(_fact_tokens(fact) & query_tokens)
+
+
+def _select_facts_for_prompt(facts, message, max_chars=None, other_max=None):
+    """Matching facts first, then the newest non-matching facts that fit.
+
+    Returns (relevant, recent). Order of relevant is strongest overlap, then
+    newer. Recent is newest-first. Total fact text stays within max_chars.
+    """
+    facts = list(facts or [])
+    max_chars = FACT_CONTEXT_MAX_CHARS if max_chars is None else int(max_chars)
+    other_max = FACT_CONTEXT_OTHER_MAX if other_max is None else int(other_max)
+    query_tokens = _fact_tokens(message or '')
+    scored = [
+        (_fact_overlap_score(fact, query_tokens), idx, fact)
+        for idx, fact in enumerate(facts)
+    ]
+    matching = [
+        fact for score, idx, fact in sorted(
+            (row for row in scored if row[0] > 0),
+            key=lambda row: (row[0], row[1]),
+            reverse=True,
+        )
+    ]
+    matched_idx = {idx for score, idx, _fact in scored if score > 0}
+    others = []
+    if other_max > 0:
+        for idx in range(len(facts) - 1, -1, -1):
+            if idx in matched_idx:
+                continue
+            others.append(facts[idx])
+            if len(others) >= other_max:
+                break
+    used = 0
+    relevant = []
+    recent = []
+
+    def _take(bucket, fact):
+        nonlocal used
+        extra = len(fact) + 3
+        if used + extra > max_chars and (bucket or used):
+            return False
+        bucket.append(fact)
+        used += extra
+        return True
+
+    for fact in matching:
+        if not _take(relevant, fact):
+            break
+    for fact in others:
+        if not _take(recent, fact):
+            break
+    return relevant, recent
+
+
+def _saved_fact_defines_question(message, facts):
+    """True when a definition question overlaps a saved fact.
+
+    Explicit search/source requests stay False so web search can still run.
+    """
+    if not message or not facts:
+        return False
+    if re.search(
+        r'\b(?:search|look\s*up|google|sources?|citations?|links?|urls?|refs?|references?)\b',
+        message,
+        re.IGNORECASE,
+    ):
+        return False
+    if not re.search(
+        r"\b(?:what(?:'s|s| is| are)|define|definition of|meaning of)\b",
+        message,
+        re.IGNORECASE,
+    ):
+        return False
+    tokens = _fact_tokens(message)
+    if not tokens:
+        return False
+    return any(_fact_overlap_score(fact, tokens) > 0 for fact in facts)
+
+
+def _matching_saved_facts(facts, message):
+    """Facts that share a content word with the message, strongest and newest first."""
+    tokens = _fact_tokens(message or '')
+    scored = []
+    for idx, fact in enumerate(facts or []):
+        score = _fact_overlap_score(fact, tokens)
+        if score > 0:
+            scored.append((score, idx, fact))
+    scored.sort(key=lambda row: (row[0], row[1]), reverse=True)
+    return [fact for _score, _idx, fact in scored]
+
+
+def _asked_term(message):
+    """Phrase a definition question is asking about, without the question words."""
+    match = re.search(
+        r"(?:what(?:'s| is| are)|define|definition of|meaning of)\s+(.+)$",
+        message or '',
+        re.IGNORECASE,
+    )
+    if not match:
+        return ''
+    phrase = match.group(1).strip().strip('"\'').rstrip('?.! ')
+    parts = phrase.split()
+    while parts and (parts[0].lower().strip("'") in _FACT_STOPWORDS or len(parts[0]) < 3):
+        parts.pop(0)
+    return ' '.join(parts)
+
+
+def _split_definition(fact):
+    """Split 'X = Y', 'X means Y', or 'X is Y' into (left, right)."""
+    text = (fact or '').strip()
+    for pattern in (
+        r'^(.*?)\s*=\s*(.+)$',
+        r'^(.*?)\s+means\s+(.+)$',
+        r'^(.*?)\s+is\s+(.+)$',
+    ):
+        match = re.match(pattern, text, re.IGNORECASE)
+        if match and match.group(1).strip() and match.group(2).strip():
+            return match.group(1).strip(), match.group(2).strip()
+    return None
+
+
+def _definition_pairs(message, facts):
+    """(term, meaning) pairs. Flip 'X = Y' when the asked term is on the right."""
+    if not _saved_fact_defines_question(message, facts):
+        return []
+    tokens = _fact_tokens(message)
+    asked = _asked_term(message)
+    pairs = []
+    for fact in _matching_saved_facts(facts, message):
+        parts = _split_definition(fact)
+        if not parts:
+            pairs.append((asked or fact.strip(), fact.strip()))
+            continue
+        left, right = parts
+        left_hit = bool(_fact_tokens(left) & tokens)
+        right_hit = bool(_fact_tokens(right) & tokens)
+        if right_hit and not left_hit:
+            term, meaning = right, left
+        else:
+            term, meaning = left, right
+        pairs.append((term.strip(' "\''), meaning.strip(' "\'')))
+    return pairs
+
+
+def _saved_definition_instruction(message, facts):
+    """Late prompt line that states the user's definition in term-means-meaning order."""
+    pairs = _definition_pairs(message, facts)
+    if not pairs:
+        return None
+    asked = _asked_term(message) or pairs[0][0]
+    bits = [
+        f'For this user, "{term}" means "{meaning}" (their saved definition).'
+        for term, meaning in pairs
+    ]
+    return (
+        f'The user asked what "{asked}" is. ' + ' '.join(bits) +
+        ' Answer with that meaning, not a general or dictionary definition.'
+    )
+
+
+def _append_saved_definition(messages, message, facts):
+    """Append the definition line as the last system message before the user turn."""
+    note = _saved_definition_instruction(message, facts)
+    if note:
+        messages.append({"role": "system", "content": note})
+    return note
+
+
+def _saved_definition_user_note(message, facts):
+    """One line for the model input. Not part of the user's own words."""
+    pairs = _definition_pairs(message, facts)
+    if not pairs:
+        return None
+    bits = []
+    for term, meaning in pairs:
+        term = re.sub(r'\s+', ' ', term).strip()
+        meaning = re.sub(r'\s+', ' ', meaning).strip()
+        bits.append(f'"{term}" means "{meaning}"')
+    return (
+        '[Saved definition for this user: ' + '; '.join(bits) +
+        '. Answer with that meaning.]'
+    )
+
+
+def _compose_user_turn(message, facts):
+    """User turn for the API. The definition sits outside <user_message>."""
+    wrapped = _wrap_user_text(message)
+    note = _saved_definition_user_note(message, facts)
+    if not note:
+        return wrapped
+    return note + '\n' + wrapped
+
+
+def _history_user_text(message):
+    """What was stored: the line the user typed, never the definition prefix."""
+    return message
+
+
+def _messages_have_saved_definition(messages):
+    needle = '[Saved definition for this user:'
+    for msg in messages or []:
+        if isinstance(msg, dict) and needle in str(msg.get('content') or ''):
+            return True
+    return False
+
+
+def _request_temperature(review_mode=False, unhinged=False, definition_hit=False):
+    """Definition hits stay low so the saved meaning is not rolled past."""
+    if definition_hit:
+        temp = 0.3
+        if unhinged:
+            return min(temp + 0.1, 0.5)
+        return temp
+    temp = 0.90 if review_mode else 0.95
+    if unhinged:
+        return min(temp + 0.1, 1.1)
+    return temp
+
+
+def _log_saved_definitions(bot, message, facts):
+    for term, meaning in _definition_pairs(message, facts):
+        _log(bot).info(
+            'saved definition attached: %s means %s',
+            re.sub(r'\s+', ' ', term).strip(),
+            re.sub(r'\s+', ' ', meaning).strip(),
+        )
+
+
+def _warn_live_workers(bot, workers):
+    alive = []
+    for thread in workers or []:
+        try:
+            if thread.is_alive():
+                alive.append(getattr(thread, 'name', None) or 'worker')
+        except Exception:
+            continue
+    if alive:
+        _log(bot).warning('Grok worker still alive after join: %s', ', '.join(alive))
+
+
+_FACTS_BEAT_SEARCH = (
+    "HIGH PRIORITY: If this user's saved facts define a term, nickname, preference, "
+    "or answer, use that saved meaning. It overrides general knowledge and web search results."
+)
+
+
+def _format_profile_for_context(nick, profile, include_facts=True, query=None):
+    """Format user profile data for inclusion in AI context.
+
+    query set: rank the asker's facts against that message.
+    query omitted: list every fact (mentioned nicks, and the full recall commands).
+    """
     if not profile:
         return None
     basic_parts = []
@@ -3604,8 +3986,19 @@ def _format_profile_for_context(nick, profile, include_facts=True):
         header += ' ' + ', '.join(basic_parts)
     lines = [header]
     if has_facts:
-        facts_formatted = "\n- ".join(profile['facts'])
-        lines.append(f"Notable facts:\n- {facts_formatted}")
+        if query is None:
+            facts_formatted = "\n- ".join(profile['facts'])
+            lines.append(f"Notable facts:\n- {facts_formatted}")
+        else:
+            # A definition hit should not be diluted by unrelated recent facts.
+            other_max = 0 if _saved_fact_defines_question(query, profile['facts']) else None
+            relevant, recent = _select_facts_for_prompt(
+                profile['facts'], query, other_max=other_max,
+            )
+            if relevant:
+                lines.append("Most relevant saved facts:\n- " + "\n- ".join(relevant))
+            if recent:
+                lines.append("Other recent saved facts:\n- " + "\n- ".join(recent))
     return '\n'.join(lines)
 
 # ==================== PROFILE SUGGESTION FUNCTIONS ====================
@@ -4957,6 +5350,10 @@ def _remember_prompt(bot, channel, nick, messages):
         if not isinstance(msg, dict):
             continue
         content = str(msg.get('content') or '')
+        if msg.get('role') == 'user' and content.startswith('[Saved definition for this user:'):
+            _prefix, _sep, content = content.partition('\n')
+            if not _sep:
+                content = ''
         if len(content) > 500:
             content = content[:500] + ' […]'
         stored.append({'role': str(msg.get('role') or '?'), 'content': content})
@@ -6883,11 +7280,9 @@ def handle(bot, trigger, _intent_decided=False):
     # messages containing "remember I prefer 12h..." etc.
     _um_stripped = (user_message or '').strip()
 
-    # --- "remember X" ---
-    if _um_stripped and _REMEMBER_CMD_RE.match(_um_stripped) and not _REMEMBER_SKIP_RE.match(_um_stripped):
-        _rem_match = _REMEMBER_CMD_RE.match(_um_stripped)
-        _fact = _rem_match.group(1).strip().rstrip('.')
-        if _fact and len(_fact) >= 5:
+    # --- "remember X" / "save that X" / "save: X" / "save X = Y" ---
+    _fact = _parse_memory_save(_um_stripped)
+    if _fact is not None and len(_fact) >= 5:
             # Always store in the speaker's own profile — these are personal notes
             # (including notes about other people, e.g. "ComputerTech is the sheep shagger")
             try:
@@ -7348,9 +7743,13 @@ def handle(bot, trigger, _intent_decided=False):
     if user_profile:
         # Always include the asker's own facts — these are intentional user-stored notes
         # (auto-learned facts go into the *subject's* profile, so the asker's facts are safe)
-        profile_text = _format_profile_for_context(trigger.nick, user_profile, include_facts=True)
+        profile_text = _format_profile_for_context(
+            trigger.nick, user_profile, include_facts=True, query=user_message,
+        )
         if profile_text:
             messages.append({"role": "system", "content": profile_text})
+            if user_profile.get('facts'):
+                messages.append({"role": "system", "content": _FACTS_BEAT_SEARCH})
     
     # Check if other users are mentioned and include their profiles
     mentioned_nicks = set()
@@ -7765,9 +8164,19 @@ def handle(bot, trigger, _intent_decided=False):
                 messages.insert(1, {"role": "system", "content": _unh_block})
                 messages.append({"role": "system", "content": _UNHINGED_REMINDER})
 
-        messages.append({"role": "user", "content": _wrap_user_text(user_message)})
+        # After the unhinged reminder so this is the last system line before the question.
+        _asker_facts = (user_profile or {}).get('facts') if user_profile else None
+        _append_saved_definition(messages, user_message, _asker_facts)
+        _log_saved_definitions(bot, user_message, _asker_facts)
+        messages.append({
+            "role": "user",
+            "content": _compose_user_turn(user_message, _asker_facts),
+        })
         try:
-            _db_add_turn(bot, trigger.nick, 'user', user_message, 'PM' if is_pm else trigger.sender)
+            _db_add_turn(
+                bot, trigger.nick, 'user', _history_user_text(user_message),
+                'PM' if is_pm else trigger.sender,
+            )
         except Exception:
             pass
     else:
@@ -7901,6 +8310,16 @@ def handle(bot, trigger, _intent_decided=False):
                 _cmd_help = list(_cat_res) or True
                 if not wants_sources and not _time_needs_lookup:
                     search_mode = False
+        # A saved definition answers the question. Do not web-search it unless
+        # the user explicitly asked for a search or for sources.
+        if (
+            search_mode
+            and not wants_sources
+            and _saved_fact_defines_question(
+                user_message, (user_profile or {}).get('facts') if user_profile else None,
+            )
+        ):
+            search_mode = False
         if search_mode and not is_pm and _effect_prompt:
             _search_tone = (
                 "heavily crossfaded (stoned + drunk) — mix stoner spacing-out with drunk energy, hiccups (*hic*), typos"

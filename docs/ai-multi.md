@@ -101,7 +101,7 @@ Load it once with `$load ai-multi` (owner); after updating the file, `$reload ai
 |---------|-----|-------------|
 | `BotNick: <message>` or `BotNick <message>` | Anyone | Talk to the bot (addressed at start with or without punctuation) |
 | `/me pets BotNick` | Anyone | Emote interaction |
-| `BotNick: remember <fact>` | Anyone | Save a fact permanently to SQLite |
+| `BotNick: remember <fact>` | Anyone | Save a fact permanently to SQLite. `save that <fact>`, `save: <fact>`, and `save <term> = <meaning>` do the same |
 | `BotNick: forget <fact>` | Anyone | Remove a saved fact (fuzzy match) |
 | `BotNick: forget everything` | Anyone | Clear all your saved facts |
 | `BotNick: what do you remember about me` | Anyone | List all your saved facts |
@@ -286,7 +286,7 @@ Clear any dynamic personalities and return the bot to its default configuration:
 
 Ask the bot the time or date and it answers from the clock, not from the model and not from earlier chat. The instant is `datetime.now(UTC)` converted with `zoneinfo`. A saved preference selects the IANA zone (`America/Chicago`). The abbreviation on the reply is that zone's name **right now** (`CST` in November, `CDT` in July). A label stored when the preference was set (`CDT`) is not printed and does not need to be cleared.
 
-Place and zone questions use the same clock when the name is recognized (`Japan`, `Tokyo`, `Sydney`, `Sydney, Australia`, `UTC`, `Europe/Paris`, …). Punctuation does not matter. A short follow-up is a clock only when it names one of those places:
+Place and zone questions use the same clock when the name is recognized (`Japan`, `Tokyo`, `Sydney`, `Sydney, Australia`, `UTC`, `Europe/Paris`, …). A known city plus its own country works with or without a space after the comma (`Tokyo,Japan`, `Tokyo, Japan`, `New York, USA`). A different country does not (`Tokyo, France` is unknown, not Tokyo). Punctuation does not matter. A short follow-up is a clock only when it names one of those places:
 
 - `what time is it?` — your zone
 - `what about in UTC?` / `and in Japan?` / `in Japan, what is the time and date?`
@@ -331,16 +331,21 @@ Preferences are saved in the database and persist across restarts.
 
 ## 🧠 Persistent Memory (Remember / Forget)
 
-Tell the bot to remember facts about you — they're stored permanently in SQLite and included in every AI context, so the bot always knows them. Facts survive restarts, rehashes, and conversation resets.
+Tell the bot to remember facts about you — they're stored permanently in SQLite. On each chat request the bot sends facts that share words with what you just said, labelled as most relevant, then up to 25 other recent facts, within about 2500 characters. It does not paste the whole list into the model. Profile fields (location, nationality, weather location) are still included. `$profile` and "what do you remember about me" still list the stored facts. Facts survive restarts, rehashes, and conversation resets.
+
+If a saved fact defines a term you ask about (`what is ranting?` and a fact `furiously mashing keys = ranting`), that saved meaning wins over general knowledge and web search, and the bot does not run a web search for that question. The other recent facts are left out of that request. The bot restates the fact in definition order twice: once as a late system note, and again on the question itself, outside the user-text tags, so it is part of the model input and not something the user typed. That second copy is not saved in history or `$aihistory`. `X = Y`, `X means Y`, and `X is Y` are flipped when the term is on the right: `ranting` means `furiously mashing keys`. Those answers use a low temperature (0.3, or 0.4 if the channel is unhinged). Asking to search, or asking for sources, still searches. The process log records `saved definition attached: <term> means <meaning>` when this happens.
 
 ### Saving Facts
 
 ```
 Grok: remember I live in Florida
 Grok: remember my favorite color is blue
-Grok: remember if I ask what does florida man say, reply with ┌ಠ_ಠ)┌∩
-Grok: remember ComputerTech is the sheep shagger
+Grok: save that furiously mashing keys = ranting
+Grok: save: my favorite color is blue
+Grok: save furiously mashing keys = ranting
 ```
+
+`save me a seat`, `save the world`, `save it for later`, and `save game` are normal chat, not a save. "remember when..." and "save that when..." are also left as chat.
 
 The bot confirms with a short response like "got it, I'll remember that" or "noted".
 
@@ -359,7 +364,7 @@ Grok: what do you know about burnout
 ```
 
 ### Limits
-- Max **50 facts** per user
+- Max **500 facts** per user (oldest facts are dropped once you pass that)
 - Max **300 characters** per fact
 - Facts must be at least **5 characters** (shorter ones pass through to the AI as conversation)
 - Duplicate facts are detected and rejected

@@ -112,6 +112,39 @@ def test_unknown_and_ambiguous_places_do_not_use_home_zone(ai, monkeypatch):
     assert '04:46' not in bot.said[0][0]
 
 
+def test_tokyo_japan_qualifiers_and_mismatched_country(ai, monkeypatch):
+    _prefs(monkeypatch, ai)
+    expected = 'Sunday, November 08, 2026 at 07:46 JST'
+    for message in (
+        'what time is it in Tokyo,Japan?',
+        'what time is it in Tokyo, Japan?',
+        'what time is it in Tokyo Japan?',
+        'what time is it in  tokyo,japan ?',
+        'what time is it in Osaka, Japan?',
+    ):
+        bot = _Bot()
+        assert ai._answer_local_clock(bot, _trig(), message, now_utc=NOV7_2246) is True
+        assert bot.said[0][0] == expected, message
+
+    assert ai._lookup_place('New York, USA') == ('zone', 'America/New_York')
+    assert ai._lookup_place('Los Angeles,United States') == ('zone', 'America/Los_Angeles')
+    assert ai._lookup_place('Sydney,Australia') == ('zone', 'Australia/Sydney')
+    assert ai._lookup_place('Sao Paulo, Brazil') == ('zone', 'America/Sao_Paulo')
+
+    assert ai._lookup_place('Sydney, Japan') is None
+    assert ai._lookup_place('Hong Kong, China') is None
+
+    bot = _Bot()
+    assert ai._answer_local_clock(
+        bot, _trig(), 'what time is it in Tokyo, France?', now_utc=NOV7_2246,
+    )
+    reply = bot.said[0][0]
+    assert "don't know the timezone" in reply
+    assert 'JST' not in reply
+    assert 'CST' not in reply
+    assert '07:46' not in reply
+
+
 def test_punctuation_does_not_change_the_zone(ai):
     a = ai._lookup_place('Sydney Australia')
     b = ai._lookup_place('Sydney, Australia')
