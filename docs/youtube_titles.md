@@ -8,7 +8,12 @@ Automatic YouTube video metadata fetching for ibot. When a user posts a YouTube 
 
 ## Setup
 
-**No config needed.** Just drop the script in place and it works.
+**Config is optional.** Titles come from YouTube oEmbed by default. Videos with embedding disabled need a YouTube Data API v3 key as a fallback:
+
+```ini
+[youtube]
+api_key = YOUR_YOUTUBE_DATA_API_KEY
+```
 
 **1. Place the script** in the plugin folder your ibot `[core] extra` points to (`~/.sopel/scripts` here):
 ```
