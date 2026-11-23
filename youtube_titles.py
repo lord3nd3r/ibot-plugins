@@ -51,6 +51,62 @@ def _is_disabled(bot, channel):
         return False
 
 
+_VID_RE = re.compile(
+    r'(?:[?&]v=|youtu\.be/|/(?:shorts|live|embed|v)/)([A-Za-z0-9_-]{11})')
+
+
+def _api_key(bot):
+    """YouTube Data API key from glitchy.cfg [youtube] api_key (optional)."""
+    try:
+        parser = getattr(bot.config, 'parser', None)
+        if parser and parser.has_option('youtube', 'api_key'):
+            return parser.get('youtube', 'api_key').strip()
+    except Exception:
+        pass
+    return ''
+
+
+def _oembed(url):
+    api = 'https://www.youtube.com/oembed?url={}&format=json'.format(quote(url, safe=''))
+    try:
+        resp = requests.get(api, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+        resp.raise_for_status()
+        obj = resp.json()
+    except Exception:
+        return '', ''
+    if not isinstance(obj, dict):
+        return '', ''
+    return _clean(obj.get('title')), _clean(obj.get('author_name'), 80)
+
+
+def _data_api(bot, url):
+    """Fallback for videos oEmbed refuses (embedding disabled, age-gated)."""
+    key = _api_key(bot)
+    m = _VID_RE.search(url)
+    if not key or not m:
+        return '', ''
+    try:
+        resp = requests.get(
+            'https://www.googleapis.com/youtube/v3/videos',
+            params={'part': 'snippet', 'id': m.group(1), 'key': key},
+            timeout=10)
+        resp.raise_for_status()
+        items = (resp.json() or {}).get('items') or []
+    except Exception:
+        return '', ''
+    if not items:
+        return '', ''
+    snip = items[0].get('snippet') or {}
+    return _clean(snip.get('title')), _clean(snip.get('channelTitle'), 80)
+
+
+def _lookup(bot, url):
+    title, author = _oembed(url)
+    if not title:
+        title, author = _data_api(bot, url)
+    return title, author
+
+
 @plugin.command('yt')
 @plugin.example('$yt off', '$yt on')
 @plugin.require_chanmsg('This command only works in channels.')
@@ -115,19 +171,7 @@ def youtube_title(bot, trigger, match=None):
     if not _cooldown_ok(trigger.sender, trigger.nick):
         return
 
-    api = 'https://www.youtube.com/oembed?url={}&format=json'.format(quote(url, safe=''))
-
-    try:
-        resp = requests.get(api, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
-        resp.raise_for_status()
-        obj = resp.json()
-    except Exception:
-        return
-
-    if not isinstance(obj, dict):
-        return
-    title = _clean(obj.get('title'))
-    author = _clean(obj.get('author_name'), 80)
+    title, author = _lookup(bot, url)
 
     if not title:
         return

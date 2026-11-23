@@ -640,9 +640,9 @@ def _handle_moo_increment(bot, nick, chan, legendary=None, say_response=True, in
 
 
 # --------------------------------------------------------------
-# Moo detector (text) — EXCLUDES "sudo moo" (incl whitespace variants)
+# Moo detector (text, also bare µ/μ) — EXCLUDES "sudo moo" (incl whitespace variants)
 # --------------------------------------------------------------
-@plugin.rule(r"(?i)^(?!\s*sudo\s+moo\s*$).*?\b(m[0o]{2,}s?)\b")
+@plugin.rule(r"(?i)^(?!\s*sudo\s+(?:moo|[\u00b5\u03bc])\s*$).*?\b(m[0o]{2,}s?|[\u00b5\u03bc]+)\b")
 def moo_response(bot, trigger):
     if not trigger.nick or trigger.nick.lower() == bot.nick.lower():
         return
@@ -712,7 +712,7 @@ def moo_action(bot, trigger):
 # --------------------------------------------------------------
 # sudo moo (1/hour per user per channel) — uses shared increment logic
 # --------------------------------------------------------------
-@plugin.rule(r"(?i)^\s*sudo\s+moo\s*$")
+@plugin.rule(r"(?i)^\s*sudo\s+(?:moo|[\u00b5\u03bc])\s*$")
 def sudo_moo(bot, trigger):
     if not trigger.nick or trigger.nick.lower() == bot.nick.lower():
         return

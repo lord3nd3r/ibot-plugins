@@ -1260,6 +1260,9 @@ def send(bot, channel, text, *, stop_event=None):
     delay = SEND_DELAY
 
     # If the AI prefixed its reply with "ACTION " treat it as a /me emote.
+    # The model sometimes copies raw CTCP \x01 bytes from the channel log;
+    # a bare \x01ACTION with no closing byte shows up as a broken " ACTION" line.
+    text = (text or '').replace('\x01', '')
     is_action = text.lstrip().startswith('ACTION ')
     if is_action:
         # Strip the leading "ACTION " token (case-sensitive, as Grok emits it)
@@ -3380,6 +3383,7 @@ def _api_worker(*, bot, trigger, messages, review_mode, is_pm, bot_nick, chan_lo
         except Exception:
             pass
 
+        reply = (reply or '').replace('\x01', '')
         dest_channel = target_channel if target_channel else trigger.sender
         # /me replies were copying the moo plugin out of the channel log
         # ("moos happily", "moos in pain") even after "stop mooing".
@@ -5188,6 +5192,9 @@ def _address_verdict(line, bot_nick):
     if not nick:
         return 'no'
     if s.startswith('>') or '```' in s:
+        return 'no'
+    # "glitchy++" / "glitchy-- reason" is karma for the bot, not a message to it.
+    if re.match(rf'^\s*[(\[]?{re.escape(nick)}[)\]]?\s*(?:\+\+|--|\+=|-=)', lower):
         return 'no'
     if re.search(r'https?://[^\s]*' + re.escape(nick), lower):
         return 'no'

@@ -14,8 +14,8 @@
 #   s/hatr/hate/2              → replace only the 2nd occurrence
 #   s|(foo)|([\1])|g           → pipe delimiter, backreference
 #   End3r: s/hatr/hate         → corrects End3r's last matching message
-#   s/hatr/hate                → also searches all recent channel history if
-#                                your own history has no match
+#   s/hatr/hate                → also searches the last 5 minutes of channel
+#                                lines if your own history has no match
 
 import json
 import re
@@ -29,6 +29,8 @@ from sopel import plugin
 HISTORY_LEN = 20          # messages remembered per (channel, nick)
 MAX_PATTERN_LEN = 200     # guard against absurd patterns
 MAX_OUTPUT_LEN = 420      # truncate corrected output to stay within IRC limits
+FALLBACK_WINDOW = 300.0   # channel-wide fallback only looks at the last 5 minutes
+FALLBACK_LINES = 30       # ...and at most this many recent channel lines
 RATE_LIMIT = 4.0          # minimum seconds between corrections per (channel, nick)
 IRC_CHAN_PREFIXES = '#&!+' # all valid IRC channel sigils
 
@@ -52,6 +54,9 @@ def setup(bot):
     if 'fix_rate' not in bot.memory:
         # {(channel, nick): last_correction_timestamp}
         bot.memory['fix_rate'] = {}
+    if 'fix_chanlog' not in bot.memory:
+        # {channel: deque([(timestamp, nick, text), ...])}  oldest -> newest
+        bot.memory['fix_chanlog'] = {}
 
     # Patch the send layer so the bot's own output is recorded and correctable.
     #
@@ -91,6 +96,9 @@ def _record_mem(memory, channel, nick, text):
     key = (channel.lower(), nick.lower())
     history = memory['fix_history'].setdefault(key, deque(maxlen=HISTORY_LEN))
     history.append(text)
+    chanlog = memory.setdefault('fix_chanlog', {}).setdefault(
+        channel.lower(), deque(maxlen=FALLBACK_LINES))
+    chanlog.append((time.time(), nick, text))
 
 
 def _record(bot, channel, nick, text):
@@ -288,13 +296,15 @@ def fix_typo(bot, trigger):
     else:
         # No target: search own history first, then fall back to whole channel
         own = [(trigger.nick, msg) for msg in reversed(_get_history(bot, channel, trigger.nick))]
-        # Build recent channel-wide history (all nicks, newest first)
-        channel_wide = []
-        chan_store = bot.memory.get('fix_history', {})
-        for (ch, nk), dq in chan_store.items():
-            if ch == channel.lower() and nk != trigger.nick.lower():
-                for msg in reversed(list(dq)):
-                    channel_wide.append((nk, msg))
+        # Recent channel-wide lines from other nicks, newest first, limited to
+        # the last FALLBACK_WINDOW seconds so a typo'd s/// can't dredge up
+        # someone's line from an hour ago.
+        cutoff = time.time() - FALLBACK_WINDOW
+        chanlog = bot.memory.get('fix_chanlog', {}).get(channel.lower(), [])
+        channel_wide = [
+            (nk, msg) for ts, nk, msg in reversed(list(chanlog))
+            if ts >= cutoff and nk.lower() != trigger.nick.lower()
+        ]
         candidates = own + channel_wide
 
     # Find first message that matches the pattern and apply the substitution
