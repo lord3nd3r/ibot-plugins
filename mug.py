@@ -20,7 +20,11 @@ import logging
 from sopel import module
 from sopel.config.types import StaticSection, ValidatedAttribute
 
-import _godmode
+import os as _gm_os, sys as _gm_sys
+_gm_dir = _gm_os.path.dirname(_gm_os.path.abspath(__file__))
+if _gm_dir not in _gm_sys.path:
+    _gm_sys.path.insert(0, _gm_dir)
+import _godmode  # noqa: E402
 
 LOG = logging.getLogger(__name__)
 
