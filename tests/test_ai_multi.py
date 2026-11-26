@@ -807,3 +807,190 @@ def test_aipardon_clears_speaker_keyed_strikes(ai, monkeypatch):
     assert set(bot.memory['grok_flood']) == {'local:carol'}
     ai.aipardon(bot, trig)
     assert out[-1] == 'bob had no AI strikes.'
+
+
+# --- bot-command catalog vs game/software command questions -----------------
+
+def _cmd_catalog_stub():
+    def ent(name, plugin, aliases=(), doc='', kind='cmd'):
+        return {
+            'name': name, 'plugin': plugin, 'kind': kind, 'aliases': list(aliases),
+            'doc': doc, 'level': 'public', 'partial': '', 'scope': '',
+            'examples': [], 'line_res': [],
+        }
+    entries = [
+        ent('give', 'coins', aliases=['gift'], doc='give coins to someone'),
+        ent('balance', 'coins', aliases=['bal'], doc='show your balance'),
+        ent('bet', 'coins', doc='bet an amount'),
+        ent('bj', 'coins', doc='play blackjack'),
+        ent('coffee', 'bartender', doc='pour a coffee'),
+        ent('beer', 'bartender', doc='pour a beer'),
+        ent('help', 'commands', doc='command reference'),
+        ent('remind', 'remind', doc='set a reminder'),
+    ]
+    by_name, by_plugin = {}, {}
+    for e in entries:
+        by_name.setdefault(e['name'], e)
+        for a in e['aliases']:
+            by_name.setdefault(a, e)
+        by_plugin.setdefault(e['plugin'].lower(), []).append(e)
+    return {
+        'entries': entries, 'by_name': by_name, 'by_plugin': by_plugin,
+        'plugin_words': set(by_plugin), 'prefix': '$',
+    }
+
+
+def test_command_question_ignores_game_and_software_queries(ai):
+    cat = _cmd_catalog_stub()
+    kwargs = dict(by_name=cat['by_name'], bot_nick='glitchy',
+                  plugin_names=cat['plugin_words'])
+    # The live bug: a Fallout New Vegas console-code question was treated as
+    # a question about glitchy's own $commands.
+    assert ai._is_command_question(
+        'what is the command to give myself mininukes tiny tot fallout nv', **kwargs) is False
+    assert ai._is_command_question(
+        'what is the command to give myself mininukes tiny tot fallout new vegas the game',
+        **kwargs) is False
+    assert ai._is_command_question(
+        'search what is the command to give myself mininukes tiny tot fallout new vegas the game',
+        **kwargs) is False
+    assert ai._is_command_question('it is a command for a game.. wtf', **kwargs) is False
+    assert ai._is_command_question('whats the console command for god mode in skyrim', **kwargs) is False
+    assert ai._is_command_question('what is the linux command to list files', **kwargs) is False
+    assert ai._is_command_question('git command to rebase onto main', **kwargs) is False
+
+
+def test_command_question_still_matches_bot_help(ai):
+    cat = _cmd_catalog_stub()
+    kwargs = dict(by_name=cat['by_name'], bot_nick='glitchy',
+                  plugin_names=cat['plugin_words'])
+    assert ai._is_command_question("what's the command for coffee", **kwargs) is True
+    assert ai._is_command_question('how do I use $beer', **kwargs) is True
+    assert ai._is_command_question('what commands do you have', **kwargs) is True
+    assert ai._is_command_question("what's your command for coffee", **kwargs) is True
+    assert ai._is_command_question('is there a command to remind me', **kwargs) is True
+    assert ai._is_command_question("what's the command?", **kwargs) is True
+    assert ai._is_command_question('is there a command to do that?', **kwargs) is True
+    assert ai._is_command_question('$help', **kwargs) is True
+    assert ai._is_command_question('search what is the command to give myself mininukes', **kwargs) is False
+    # Explicit search about the bot's own commands can still be command-help.
+    assert ai._is_command_question("search what's your command for coffee", **kwargs) is True
+
+
+def test_explicit_search_request_and_cmd_help_does_not_disable_it(ai):
+    assert ai._explicit_search_request(
+        'search what is the command to give myself mininukes tiny tot fallout new vegas the game')
+    assert ai._explicit_search_request('look up the fallout new vegas console code')
+    assert ai._explicit_search_request('google player.additem tiny tot')
+    assert ai._explicit_search_request('can you look up the item id')
+    assert ai._explicit_search_request("what's the command for coffee") is None or not ai._explicit_search_request(
+        "what's the command for coffee")
+    # "what is" is broad in _SEARCH_INTENT_RE; it is not an explicit search.
+    assert not ai._explicit_search_request('what is the command to give myself mininukes')
+    # The intercept that used to force search_mode=False must leave explicit search on.
+    assert ai._cmd_help_should_disable_search(
+        'search what is the command to give myself mininukes tiny tot fallout new vegas the game') is False
+    assert ai._cmd_help_should_disable_search("what's the command for coffee") is True
+    assert ai._cmd_help_should_disable_search("what's the command for coffee", wants_sources=True) is False
+
+
+def test_cmd_select_does_not_dump_coins_plugin_on_give_myself(ai):
+    cat = _cmd_catalog_stub()
+    lines, hidden, matched, used = ai._cmd_select(
+        cat, 'what is the command to give myself mininukes tiny tot fallout nv', False)
+    names = {e['name'] for e in used}
+    assert 'bet' not in names and 'bj' not in names and 'balance' not in names
+    blob = '\n'.join(lines)
+    assert '$bet' not in blob and '$bj' not in blob and '$balance' not in blob
+    # A generic list request still gets an index.
+    lines, _, _, _ = ai._cmd_select(cat, 'what commands do you have', False)
+    blob = '\n'.join(lines)
+    assert '$beer' in blob or 'beer' in blob
+    assert '$coffee' in blob or 'coffee' in blob
+
+
+def test_cmd_help_filter_drops_leaked_command_lines_after_refusal(ai):
+    rest, cmds = ai._split_command_lines(
+        'jayisproxi: no command for that\n$balance\n$bet <amount>\n$bj <amount>',
+        prefix='$', limit=8)
+    assert cmds == ['$balance', '$bet <amount>', '$bj <amount>']
+    reply, cmds = ai._cmd_help_filter_lines(rest, cmds)
+    assert 'no command for that' in reply
+    assert cmds == []
+    # A real command-help answer still keeps the pasteable line.
+    rest, cmds = ai._split_command_lines('pour one with:\n$coffee', prefix='$', limit=3)
+    reply, cmds = ai._cmd_help_filter_lines(rest, cmds)
+    assert cmds == ['$coffee']
+
+
+# --- natural-language give: measure words ("a slice of turkey") -------------
+
+def _nl_menu():
+    names = ('pizza', 'beer', 'shot', 'coffee', 'tea', 'tequila', 'appetizer')
+    return {n: {'name': n, 'plugin': 'beer'} for n in names}
+
+
+def test_nl_slice_of_other_food_is_not_pizza(ai):
+    allowed = _nl_menu()
+    users = {'radqwerty': 'radqwerty', 'weasel': 'weasel'}
+    parse = lambda text: ai._nl_parse_action(text, {}, allowed, users, 'weasel', 'glitchy')
+    # The 2026-11-26 bug: "slice" was a pizza synonym, so turkey became pizza.
+    assert parse('give radqwerty a slice of turkey') is None
+    assert parse('give radqwerty a slice of pie') is None
+    # Real pizza requests still run $pizza.
+    assert parse('give radqwerty a slice of pizza') == ('pizza', 'radqwerty')
+    assert parse('give radqwerty a slice') == ('pizza', 'radqwerty')
+    assert parse('give radqwerty a pizza') == ('pizza', 'radqwerty')
+    assert parse('get me a slice') == ('pizza', '')
+    # "of <menu item>" picks that item; a real command word keeps its command.
+    assert parse('give radqwerty a shot of tequila') == ('tequila', 'radqwerty')
+    assert parse('give radqwerty a cup of coffee') == ('coffee', 'radqwerty')
+    assert parse('give radqwerty a shot of jager') == ('shot', 'radqwerty')
+    assert parse('give radqwerty a beer') == ('beer', 'radqwerty')
+
+
+# --- model emotes become a real /me ------------------------------------------
+
+@pytest.mark.parametrize('raw,body', [
+    ('ACTION waves', 'waves'),
+    ('/me waves', 'waves'),
+    ('*action swaps the pizza for a steaming turkey slice and teleports it to radqwerty*',
+     'swaps the pizza for a steaming turkey slice and teleports it to radqwerty'),
+    ('*action: waves at bob*', 'waves at bob'),
+    ('*Action* waves at bob', 'waves at bob'),
+    ('*action waves* lol', 'waves lol'),
+    ('[action] waves', 'waves'),
+    ('(emote) waves', 'waves'),
+    ('[/me] waves', 'waves'),
+    ('action: waves', 'waves'),
+    ('_action waves_', 'waves'),
+    ('*waves at bob*', 'waves at bob'),
+    ('*glitchy waves*', 'waves'),
+    ('weasel: *action swaps the pizza*', 'swaps the pizza'),
+    ('weasel: /me waves', 'waves'),
+    ('/me *waves*', 'waves'),
+    ('\x01ACTION waves\x01', 'waves'),
+])
+def test_coerce_action_reply_variants(ai, raw, body):
+    assert ai._coerce_action_reply(raw, 'glitchy') == (True, body)
+
+
+@pytest.mark.parametrize('raw', [
+    'hello there', 'the action movie was good', '*really* good pizza', 'weasel: *really* nice',
+    '**bold** text', 'i like the /me command', 'transaction failed',
+])
+def test_coerce_action_reply_leaves_plain_text(ai, raw):
+    ok, _ = ai._coerce_action_reply(raw, 'glitchy')
+    assert ok is False
+
+
+def test_send_turns_star_action_into_ctcp_action(ai, stateful_ai_bot):
+    bot = stateful_ai_bot
+    said, acted = [], []
+    bot.say = lambda text, target: said.append((text, target))
+    bot.action = lambda text, target: acted.append((text, target))
+    ai.send(bot, '#chat', '*action swaps the pizza for a steaming turkey slice*')
+    assert said == []
+    assert acted == [('swaps the pizza for a steaming turkey slice', '#chat')]
+    ai.send(bot, '#chat', 'plain words')
+    assert said == [('plain words', '#chat')]

@@ -157,6 +157,16 @@ TRUNCATED_REPLY_LENGTH = 1390
 BG_CHAR_BUDGET = 6000          # background context budget — includes bot output & commands
 
 # Module-level regex patterns (compiled once at import time)
+# Narrower than _SEARCH_INTENT_RE: the user clearly asked to web-search the query.
+# Leading "search/look up/google ..." after the bot nick is stripped ("glitchy search X").
+_EXPLICIT_SEARCH_RE = re.compile(
+    r'^(?:(?:please|pls|plz|hey|yo)\s+)*'
+    r'(?:(?:can|could|would|will)\s+you\s+)?'
+    r'(?:please\s+|pls\s+|plz\s+)?'
+    r'(?:search(?:\s+for)?|google|bing|look\s*up|find\s+out|web\s+search)\b',
+    re.IGNORECASE,
+)
+
 _SEARCH_INTENT_RE = re.compile(
     r'\b(search|news|latest|recent|today|yesterday|tonight|this week|this month|'
     r'current events?|whats? happening|headlines?|score|results?|standings?|'
@@ -1255,18 +1265,68 @@ def shutdown(bot):
     _log(bot).info('Grok plugin shut down cleanly')
 
 
+# Model-written emotes in all the shapes it has produced: "ACTION waves",
+# "/me waves", "*action waves*", "*action: waves*", "*action* waves",
+# "[action] waves", "(emote) waves", "action: waves", "_action waves_", and a
+# reply that is one "*waves*" span. Each becomes a real CTCP ACTION.
+_ACT_WORD = r'(?:actions?|emote|me)'
+_ACTION_REPLY_PATTERNS = (
+    re.compile(r'^ACTION\s+(?P<body>.+)$', re.S),
+    re.compile(r'^/me\s+(?P<body>.+)$', re.S | re.I),
+    re.compile(r'^\*\s*' + _ACT_WORD + r'\s*\*\s*[:\-]?\s*(?P<body>.+)$', re.S | re.I),
+    re.compile(r'^\*\s*' + _ACT_WORD + r'\s*[:\-]?\s+(?P<body>[^*]+?)\s*\*\s*(?P<tail>.*)$', re.S | re.I),
+    re.compile(r'^\*\s*' + _ACT_WORD + r'\s*:\s*(?P<body>[^*]+?)\s*\*\s*(?P<tail>.*)$', re.S | re.I),
+    re.compile(r'^_\s*' + _ACT_WORD + r'\s*[:\-]?\s+(?P<body>[^_]+?)\s*_\s*(?P<tail>.*)$', re.S | re.I),
+    re.compile(r'^[\[(<{]\s*/?' + _ACT_WORD + r'\s*[\])>}]\s*[:\-]?\s*(?P<body>.+)$', re.S | re.I),
+    re.compile(r'^(?:action|emote)\s*:\s*(?P<body>.+)$', re.S | re.I),
+    re.compile(r'^\*(?!\*)\s*(?P<body>[^*]+?)\s*\*$', re.S),
+)
+_ACTION_NICK_PREFIX_RE = re.compile(r'^[A-Za-z0-9_\[\]\\`^{}|-]{1,32}[:,]\s+(?=(?:ACTION\s|/me\s|\*|_\s*' + _ACT_WORD + r'|[\[(<{]))', re.I)
+
+
+def _coerce_action_reply(text, bot_nick=None):
+    """(is_action, body) for a model reply that is written as an emote.
+
+    A "nick: " the model put in front of the emote is dropped, and so is a
+    leading bot nick inside it ("*glitchy waves*" -> "waves").
+    """
+    t = (text or '').replace('\x01', '').strip()
+    if not t:
+        return False, t
+    t2 = _ACTION_NICK_PREFIX_RE.sub('', t, count=1)
+    for pat in _ACTION_REPLY_PATTERNS:
+        m = pat.match(t2)
+        if not m:
+            continue
+        body = m.group('body').strip()
+        tail = (m.groupdict().get('tail') or '').strip()
+        if tail:
+            body = f"{body} {tail}"
+        # nested wrappers: "/me *waves*", "ACTION *action waves*"
+        inner_ok, inner = _coerce_action_reply(body, bot_nick) if body != t2 else (False, body)
+        if inner_ok and inner:
+            body = inner
+        body = re.sub(r'^\*+\s*|\s*\*+$', '', body).strip() if body.count('*') == 2 and body.startswith('*') and body.endswith('*') else body
+        if bot_nick:
+            body = re.sub(r'^' + re.escape(str(bot_nick)) + r'\b[:,]?\s+', '', body, flags=re.I)
+        if not body:
+            return False, t
+        return True, body
+    return False, t
+
+
 def send(bot, channel, text, *, stop_event=None):
     max_len = MAX_SEND_LEN
     delay = SEND_DELAY
 
-    # If the AI prefixed its reply with "ACTION " treat it as a /me emote.
-    # The model sometimes copies raw CTCP \x01 bytes from the channel log;
-    # a bare \x01ACTION with no closing byte shows up as a broken " ACTION" line.
+    # If the AI wrote an emote ("ACTION waves", "/me waves", "*action waves*",
+    # "[action] waves", ...) send it as a /me. The model sometimes copies raw
+    # CTCP \x01 bytes from the channel log; a bare \x01ACTION with no closing
+    # byte shows up as a broken " ACTION" line.
     text = (text or '').replace('\x01', '')
-    is_action = text.lstrip().startswith('ACTION ')
+    is_action, _act_body = _coerce_action_reply(text)
     if is_action:
-        # Strip the leading "ACTION " token (case-sensitive, as Grok emits it)
-        text = text.lstrip()[len('ACTION '):]
+        text = _act_body
 
     words = []
     for w in text.split():
@@ -3343,6 +3403,7 @@ def _api_worker(*, bot, trigger, messages, review_mode, is_pm, bot_nick, chan_lo
                     reply = _rest if _rest.strip() else ''
                     if not reply:
                         reply = cmd_lines.pop(0)
+                    reply, cmd_lines = _cmd_help_filter_lines(reply, cmd_lines)
             except Exception:
                 cmd_lines = []
         reply = ' '.join(line.strip() for line in reply.splitlines() if line.strip())
@@ -3393,7 +3454,11 @@ def _api_worker(*, bot, trigger, messages, review_mode, is_pm, bot_nick, chan_lo
             except Exception:
                 _src = ''
             reply = _non_moo_action(_src)
-        is_reply_action = reply.lstrip().startswith('ACTION ')
+        # "*action swaps the pizza*", "/me waves", "[action] ..." are emotes too:
+        # send them as a real /me, never as "nick: *action ...*".
+        is_reply_action, _act_body = _coerce_action_reply(reply, bot_nick)
+        if is_reply_action:
+            reply = f"ACTION {_act_body}"
         if is_action or is_reply_action:
             if is_action and not is_reply_action:
                 final_reply = f"ACTION {reply}"
@@ -5204,35 +5269,110 @@ def _address_verdict(line, bot_nick):
         return 'no'
     if re.search(rf"\b(?:if|when|you|we|they|people|someone)\b(?:\W+\w+){{0,8}}\W+\b(?:say|call|mention|use|type|write|spell|invoke)\b\W+{re.escape(nick)}", lower):
         return 'no'
+    _n = re.escape(nick)
+    _bn = re.escape(bot_nick)
+    # Optional leading hail used in a few later checks ("hey glitchy", "sup glitchy").
+    _GREET = r'(?:hey(?:\s+there)?|hi(?:\s+there)?|heya|hiya|hello|howdy|yo(?:\s+there)?|sup|s\'?up|wassup|whassup|@)?'
+    _EMO = r"(?:[:;=8][-']?[)(DPpoOSs3/\\|*]+|[xX][dD]|<3|\^_?\^|;_;|T_T)"
+    _END_JUNK = rf'(?:\s*(?:{_EMO}|please|pls|plz|\W))*\s*$'
+    # Talking ABOUT the bot: "does/can/will glitchy ...", "who is glitchy".
+    if re.search(rf'\b(?:do|does|did|can|could|will|would|should|has|had|have)\b\s+{_n}\b', lower):
+        return 'no'
+    # "glitchy is down" / "I think glitchy is broken" — statement about the bot.
+    # Exception: "glitchy is that true?" / "glitchy is it ready?" hails it.
+    if re.search(rf'\b{_n}\s+(?:is|was|isn\'?t|wasn\'?t|ain\'?t)\s+(?!that\b|this\b|it\b|there\b|here\b)', lower):
+        return 'no'
+    if re.search(rf'\b{_n}\s+(?:has|had|hasn\'?t)\s+(?:been|gone|gotten|got)\b', lower):
+        return 'no'
+    if re.search(rf'\b{_n}\s+(?:does|doesn\'?t)\s+(?!you\b|we\b)', lower):
+        return 'no'
+    if re.search(rf'\b{_n}\s+did\s+(?!you\b|we\b|it\b|i\b)', lower):
+        return 'no'
+    if re.search(rf'\b{_n}\s+(?:keeps|seems|looks|feels|went)\b', lower):
+        return 'no'
+    # Someone telling a third party to consult the bot: "ask glitchy about it".
+    if re.search(rf'\b(?:ask|asks|asked|asking|tell|tells|told|telling|ping|pings|pinged|mention|mentions|mentioned)\s+{_n}\b', lower):
+        if not re.match(rf'^\s*{_GREET}\s*{_bn}\b', s, re.IGNORECASE):
+            return 'no'
+    # "I hate how glitchy does X", "the way glitchy talks", "what glitchy said".
+    if re.search(rf'\b(?:how|the\s+way)\s+{_n}\b', lower) and not re.search(r'\bhow\s+about\b', lower):
+        if not re.search(rf'{_n}\s*\W*$', lower):
+            return 'no'
+    if re.search(rf'\b(?:what|when|whenever|after|before|because|cause|cuz|if)\s+{_n}\b', lower):
+        if not re.match(rf'^\s*{_n}', lower) and not re.search(rf'{_n}\s*\W*$', lower):
+            return 'no'
+    # "@glitchy" is a direct ping (URLs containing the nick already returned no).
+    if re.search(rf'(?:^|[\s,;])@{_n}\b', lower):
+        return 'yes'
+    # Imperative opener aimed at the bot: "see that shit glitchy ...", "look glitchy ...",
+    # "check this out glitchy". The line is an order to someone, and the bot is that someone.
+    if re.match(r'^\s*(?:see|look(?:\s+at)?|check(?:\s+(?:this|that|it))?(?:\s+out)?|peep|watch|guess|imagine|listen|read|wait|hold\s+(?:on|up)|hang\s+on|notice|consider|witness|behold|compare|try)\b', lower) \
+            and re.search(rf'\b{_n}\b(?!\s+(?:is|was|has|does|did|will|can|should|would|keeps|just)\b)', lower):
+        return 'yes'
     # Third-person pronoun as subject — talking ABOUT the bot, not TO it.
-    if re.match(r'^\s*\b(?:he|she|it|they|him|her|its|their)\b', lower) and not re.search(rf'\b{re.escape(nick)}\s*\W*$', lower):
+    if re.match(r'^\s*\b(?:he|she|it|they|him|her|its|their)\b', lower) and not re.search(rf'\b{_n}\s*\W*$', lower):
         return 'no'
-    # Determiner/adjective immediately before nick — using nick as descriptor.
-    if re.search(rf'\b(?:that|this|the|a|an|some|more|very|too|so|really|pretty|quite)\s+{re.escape(nick)}\b', lower):
-        return 'no'
-    # "the bot glitchy is acting up" — nick is a name being discussed, not hailed.
-    if re.search(rf'\b(?:the|a|an|that|this)\s+(?:\w+\s+){{1,3}}{re.escape(nick)}\b', lower):
-        if not re.match(rf'^\s*(?:hey|hi|yo|hello)?\s*{re.escape(bot_nick)}\b', s, re.IGNORECASE):
+    # Determiner immediately before nick — using nick as descriptor ("this glitchy mess").
+    # Don't fire when the nick is a vocative at the end: "explain this glitchy".
+    if re.search(rf'\b(?:that|this|the|a|an|some|more)\s+{_n}\b', lower):
+        if not re.search(rf'\b(?:that|this|the|a|an|some|more)\s+{_n}' + _END_JUNK, lower):
+            return 'no'
+    # "so/very/too/really/pretty/quite + nick" is adjectival ("that's so glitchy",
+    # "too glitchy for me") unless the nick is then clearly hailed
+    # ("so glitchy what's next", "ok so glitchy").
+    _int = re.search(rf'\b(?:very|too|so|really|pretty|quite)\s+{_n}\b', lower)
+    if _int:
+        _after = lower[_int.end():]
+        _prefix = lower[:_int.start()]
+        _word = _int.group(0).split()[0]
+        _hailed_after = re.match(
+            r"\s*(?:[,:!?]|what|whats|what'?s|how|when|where|why|who|can|could|would|will|do|did|are|have|tell|show|give|explain|please|pls|is\s+that|is\s+this)\b",
+            _after,
+        )
+        _discourse = re.search(r'\b(?:ok|okay|alright|aight|well|anyway|yeah|yes|but)\s+$', _prefix)
+        _so_lead = (_word == 'so' and re.match(r'^\s*$', _prefix) and _after.strip())
+        if not (_hailed_after or _discourse or _so_lead):
+            return 'no'
+    # "the bot glitchy is acting up" — apposition, nick is being discussed, not hailed.
+    # Do not treat a vocative after a random noun phrase as this ("tell me a story glitchy",
+    # "that was funny glitchy :P"). Those still match when the in-between word is a
+    # bot/person label, even at the end: "I was talking to the bot glitchy".
+    _app = re.search(rf'\b(?:the|a|an|that|this)\s+(?:\w+\s+){{1,3}}{_n}\b', lower)
+    if _app:
+        _rest = lower[_app.end():]
+        _at_end = re.match(_END_JUNK, _rest)
+        _bot_label = re.search(
+            rf'\b(?:the|a|an|that|this)\s+(?:\w+\s+){{0,2}}(?:bot|chatbot|script|program|ai|model|dude|guy)\s+{_n}\b',
+            lower,
+        )
+        if (_bot_label or not _at_end) and not re.match(rf'^\s*{_GREET}\s*{_bn}\b', s, re.IGNORECASE):
+            return 'no'
+    # "tell me about glitchy" / "what about glitchy" is about the bot, not a hail
+    # (unlike "what about you glitchy" / "how about it glitchy").
+    if re.search(rf'\b(?:talk(?:ing)?\s+)?(?:about|because\s+of)\s+{_n}\b', lower) \
+            and not re.search(rf'\b(?:how\s+about(?:\s+(?:it|that|you))?|what\s+about\s+you)\b', lower):
+        if not re.match(rf'^\s*{_GREET}\s*{_bn}\b', s, re.IGNORECASE):
             return 'no'
     # Preposition before nick — talking about the bot in passing.
-    if re.search(rf'\b(?:about|with|from|like|for|than|of)\s+(?:\w+\s+)*{re.escape(nick)}\b', lower):
-        if not re.match(rf'^\s*{re.escape(nick)}', lower) and not re.search(rf'{re.escape(nick)}\s*\W*$', lower):
+    if re.search(rf'\b(?:about|with|from|like|for|than|of)\s+(?:\w+\s+)*{_n}\b', lower):
+        if not re.match(rf'^\s*{_n}', lower) and not re.search(rf'{_n}\s*\W*$', lower):
             return 'no'
     # Nick followed by a noun — used as adjective, not being addressed.
-    if re.search(rf'\b{re.escape(nick)}\s+(?:personality|behavior|behaviour|attitude|thing|stuff|bot|code|feature|bug|issue|problem|vibe|energy|mode|style|way|level)\b', lower):
+    if re.search(rf'\b{_n}\s+(?:personality|behavior|behaviour|attitude|thing|stuff|bot|code|feature|bug|issue|problem|vibe|energy|mode|style|way|level)\b', lower):
         return 'no'
-    if s.startswith('*') and re.search(rf'\b{re.escape(nick)}\b', s, re.IGNORECASE):
+    if s.startswith('*') and re.search(rf'\b{_bn}\b', s, re.IGNORECASE):
         return 'yes'
-    if re.match(rf'^\s*{re.escape(bot_nick)}\s*[:,>»›-]', s, re.IGNORECASE):
+    if re.match(rf'^\s*{_bn}\s*[:,>»›-]', s, re.IGNORECASE):
         return 'yes'
     # "othernick: ... glitchy" is said TO othernick, even when it ends with our nick.
     if re.match(r'^\s*[A-Za-z_\[\]\\^{}|`][A-Za-z0-9_\-\[\]\\^{}|`]{0,31}:\s+\S', s):
         return 'no'
-    if re.search(rf'{re.escape(bot_nick)}\s*\W*$', s, re.IGNORECASE):
+    # Nick at the end, including before an emoticon: "thanks glitchy :P", "glitchy xD".
+    if re.search(rf'{_bn}(?:\s*{_EMO}|\s*\W*)\s*$', s, re.IGNORECASE):
         return 'yes'
     # Addressed to someone else explicitly via "Nick:" or "hey Nick,"
-    if re.match(r'^\s*(?:hey|hi|yo|hello)?\s*[a-zA-Z0-9_|-]+\s*[:,>»›]\s+', s, re.IGNORECASE):
-        if not re.match(rf'^\s*(?:hey|hi|yo|hello)?\s*{re.escape(bot_nick)}\s*[:,>»›]\s+', s, re.IGNORECASE):
+    if re.match(rf'^\s*{_GREET}\s*[a-zA-Z0-9_|-]+\s*[:,>»›]\s+', s, re.IGNORECASE):
+        if not re.match(rf'^\s*{_GREET}\s*{_bn}\s*[:,>»›]\s+', s, re.IGNORECASE):
             return 'no'
 
     # "glitchy and alice …" is two subjects, not a direct address.
@@ -5242,29 +5382,97 @@ def _address_verdict(line, bot_nick):
         'what', 'whats', 'how', 'when', 'where', 'why', 'who', 'which',
         'my', 'your', 'our', 'this', 'that', 'it', 'there', 'here', 'please',
     }
-    _lead_nick = re.match(
-        rf'^\s*(?:hey|hi|yo|hello)?\s*{re.escape(bot_nick)}\b', s, re.IGNORECASE)
-    _nick_and = re.search(rf'\b{re.escape(nick)}\s+(?:and|or)\s+(\w+)\b', lower)
-    _and_nick = re.search(rf'\b(\w+)\s+(?:and|or)\s+{re.escape(nick)}\b', lower)
+    _lead_nick = re.match(rf'^\s*{_GREET}\s*{_bn}\b', s, re.IGNORECASE)
+    _nick_and = re.search(rf'\b{_n}\s+(?:and|or)\s+(\w+)\b', lower)
+    _and_nick = re.search(rf'\b(\w+)\s+(?:and|or)\s+{_n}\b', lower)
     if _nick_and or _and_nick:
         _direct_func = bool(
             _lead_nick and _nick_and and _nick_and.group(1) in _and_func)
         if not _direct_func and not re.match(
-            rf'^\s*(?:hey|hi|yo|hello)?\s*{re.escape(bot_nick)}\s*[:,>»›-]',
+            rf'^\s*{_GREET}\s*{_bn}\s*[:,>»›-]',
             s, re.IGNORECASE,
         ):
             return 'no'
 
-    if '?' in s and re.search(rf'\b{re.escape(bot_nick)}\b', s, re.IGNORECASE):
+    if '?' in s and re.search(rf'\b{_bn}\b', s, re.IGNORECASE):
         return 'yes'
-    if re.match(rf'^\s*{re.escape(nick)}\s+\w', lower):
+    # Nick followed by a question word or imperative anywhere: "glitchy what's ...",
+    # "hey everyone, glitchy tell me ...", "glitchy can you ...".
+    if re.search(
+        rf"\b{_n}\s+(?:what|whats|what'?s|whatcha|how|how'?s|hows|when|where|why|who|which|"
+        rf"can|could|would|will|won'?t|should|shall|may|might|do|did|are|were|have|haven'?t|"
+        rf"tell|show|give|gimme|explain|say|think|guess|remind|stop|start|please|pls|plz|"
+        rf"help|go|come|make|get|find|look|check|see)\b",
+        lower,
+    ):
+        return 'yes'
+    # "can you / could you / will you ..." with the nick framing the request,
+    # but not "can you believe glitchy did that".
+    if re.search(rf"\b{_n}\s*[,:]?\s*(?:can|could|would|will|won'?t|can'?t|would'?t)\s+you\b", lower):
+        return 'yes'
+    if re.search(rf"\b(?:can|could|would|will|won'?t)\s+you\b.{{0,80}}\b{_n}\b", lower):
+        if not re.search(rf"\b(?:can|could|would|will)\s+you\s+(?:believe|imagine|even)\b", lower):
+            return 'yes'
+    if re.search(rf'\b{_n}\s*[,:]?\s*(?:tell|show|give|gimme|explain|remind)\s+me\b', lower):
+        return 'yes'
+    if re.search(rf'\b(?:tell|show|give|gimme|explain|remind)\s+me\b.{{0,40}}\b{_n}\b', lower):
+        return 'yes'
+    if re.search(rf'\b(?:what\s+do\s+you\s+think|wdyt|d\'?ya\s+think|your\s+(?:thoughts|take|opinion)|do\s+you\s+think)\b', lower) \
+            and re.search(rf'\b{_n}\b', lower):
+        return 'yes'
+    if re.match(rf'^\s*{_n}\s+\w', lower):
         return 'yes'
     words = s.split()
-    if len(words) <= 6 and re.search(rf'\b{re.escape(bot_nick)}\b', s, re.IGNORECASE):
+    if len(words) <= 6 and re.search(rf'\b{_bn}\b', s, re.IGNORECASE):
         return 'yes'
-    # Direct address mid-line: "welcome back glitchy!", "thanks glitchy, ...", "ok, glitchy."
-    _n = re.escape(nick)
-    if re.search(rf"\b(?:hey|hi|hiya|hello|yo|sup|welcome(?:\s+back)?|wb|thanks|thank\s+you|thx|ty|good\s+(?:job|bot|morning|night|evening)|gn|gm|night|morning|bye|later|cya|ok|okay|lol|sorry|congrats|cheers|love\s+you|ily|damn|dude|bro)\W+{_n}\b(?!\s*(?:is|was|has|does|did|will|can|should|would)\b)", lower):
+    # Direct address mid-line: greetings, thanks, praise, insults, requests, discourse cues.
+    _cues = (
+        # greetings & farewells
+        r"hey(?:\s+there)?", r"heya", r"hiya", r"hi(?:\s+there)?", r"hello", r"howdy",
+        r"yo(?:\s+there)?", r"sup", r"s'?up", r"wassup", r"whassup", r"wsup",
+        r"whaddup", r"wadup", r"what'?s\s+up", r"whatup", r"hola",
+        r"mornin[g']?", r"evenin[g']?", r"afternoon",
+        r"g'?night", r"goodnight", r"good\s+night", r"nite",
+        r"good\s+(?:job|bot|one|morning|night|evening|afternoon)",
+        r"gn", r"gm", r"night", r"morning",
+        r"bye", r"goodbye", r"good\s+bye", r"cya", r"see\s+ya", r"see\s+you",
+        r"ttyl", r"later", r"lates", r"laters", r"l8r", r"peace(?:\s+out)?",
+        r"welcome(?:\s+back)?", r"wb", r"take\s+care",
+        # thanks & praise
+        r"thanks", r"thank\s+you", r"thank\s+ya", r"thx", r"thnx", r"thanx",
+        r"ty", r"tysm", r"tyvm",
+        r"nice(?:\s+one)?", r"good\s+one", r"well\s+done", r"well\s+played",
+        r"wp", r"gg", r"based", r"fire", r"slay(?:ed)?", r"nailed\s+it",
+        r"love\s+it", r"love\s+you", r"ily", r"amazing", r"awesome",
+        r"excellent", r"perfect", r"brilliant", r"congrats", r"cheers",
+        r"lmao", r"lmfao", r"lol", r"rofl", r"haha+", r"hehe+",
+        # insults & challenges
+        r"stfu", r"shut\s+up", r"shut\s+the\s+fuck\s+up",
+        r"fuck\s+(?:you|off|u)", r"fu", r"screw\s+you", r"piss\s+off",
+        r"eat\s+shit", r"bite\s+me", r"you\s+suck", r"bad\s+bot",
+        r"try\s+again", r"do\s+better", r"do\s+it\s+again", r"wrong",
+        r"nope", r"nuh\s+uh", r"lame", r"trash", r"cringe",
+        r"damn", r"dude", r"bro", r"bruh", r"fam",
+        # requests, tag-questions, discourse markers
+        r"c['’]?mon", r"come\s+on", r"oi", r"ayo", r"aye", r"ey",
+        r"pls", r"plz", r"please", r"pretty\s+please",
+        r"wtf", r"wth", r"omg", r"omfg", r"wow", r"whoa", r"ugh",
+        r"hmm+", r"hm", r"nah", r"yeah", r"yea", r"yep", r"yup", r"yes", r"no",
+        r"ok", r"okay", r"okie", r"alright", r"aight", r"alrighty",
+        r"so", r"well", r"now", r"anyway", r"anywho", r"listen",
+        r"right", r"agreed", r"agree", r"exactly", r"indeed", r"true", r"fair",
+        r"sorry", r"my\s+bad", r"oops", r"whoops",
+        r"tell\s+me", r"show\s+me", r"give\s+me", r"gimme", r"explain",
+        r"what\s+do\s+you\s+think", r"wdyt", r"thoughts",
+        r"you(?:\s+still)?\s+there", r"you\s+up",
+        r"what\s+about\s+you", r"and\s+you", r"or\s+you",
+        r"how\s+about(?:\s+(?:it|that|you))?", r"how\s+bout(?:\s+(?:it|that|you))?",
+        r"how\s+are\s+you", r"how\'?s\s+it\s+going",
+    )
+    if re.search(
+        rf"\b(?:{'|'.join(_cues)})\W+{_n}\b(?!\s*(?:is|was|has|does|did|will|can|should|would)\b)",
+        lower,
+    ):
         return 'yes'
     if re.search(rf"(?:^|[,;]\s*){_n}\s*[!?.,]", lower) or re.search(rf",\s*{_n}\b\s*(?:[!?.,]|$)", lower):
         return 'yes'
@@ -6132,14 +6340,121 @@ _CMD_REQUEST_EXCLUDE = frozenset(
 _CMD_FOLLOWUP_WINDOW = 180.0
 _CMD_FOLLOWUP_MAX_WORDS = 12
 
+# Games, consoles, cheats, shells, and other software — not this bot's $commands.
+_CMD_Q_EXTERNAL_RE = re.compile(
+    r"\b(?:"
+    r"games?|gaming|console(?:\s+commands?)?|cheat(?:s|\s*codes?)?|"
+    r"item\s+(?:id|ids|code|codes)|additem|spawn(?:ing)?|"
+    r"terminal|shell|bash|zsh|powershell|linux|unix|macos|"
+    r"\bgit\b|\bvim\b|emacs|docker|kubectl|\bsql\b|"
+    r"fallout|skyrim|minecraft|roblox|steam|xbox|playstation|nintendo|"
+    r"new\s+vegas|gta|witcher|valorant|fortnite|\bwow\b|"
+    r"in(?:side)?\s+(?:the\s+)?(?:game|console|terminal|shell)"
+    r")\b",
+    re.IGNORECASE)
+# "your command", "the bot's commands", "commands you have" — clearly about this bot.
+_CMD_Q_BOT_OWN_RE = re.compile(
+    r"\b(?:your|ur|you(?:r|'re)?|the\s+bot(?:'s)?|this\s+bot(?:'s)?|bot(?:'s)?)\b"
+    r".{0,24}\b(?:commands?|cmds?|syntax|usage|plugins?)\b"
+    r"|\b(?:commands?|cmds?|syntax|usage|plugins?)\b.{0,24}"
+    r"\b(?:your|ur|you\s+have|you\s+got|the\s+bot|this\s+bot|you)\b",
+    re.IGNORECASE)
+# Bare / generic "what's the command?", "is there a command to...", no other subject.
+_CMD_Q_BARE_RE = re.compile(
+    r"(?:^|\b)(?:what(?:'s|\s+is|\s+are)?|which|is\s+there(?:\s+a|\s+any)?)\s+"
+    r"(?:the\s+|a\s+|any\s+)?(?:cmd|command|commands|cmds|syntax|usage|trigger)\b"
+    r"(?:\s+(?:for|to)\s+(?:that|this|it|do\s+that))?\s*\??\s*$",
+    re.IGNORECASE)
+_CMD_GENERIC_RE = re.compile(
+    r"\b(?:what|which|list|all|show|any|your|available)\b.{0,30}\b(?:commands?|cmds?)\b"
+    r"|\b(?:commands?|cmds?)\b.{0,20}\b(?:you\s+have|do\s+you|available|exist|list)\b"
+    r"|\bwhat\s+can\s+(?:you|u)\s+do\b", re.IGNORECASE)
+_CMD_Q_META_WORDS = frozenset(
+    'the a an and or but to of in on for with at by from is are was were be been do does did '
+    'i me my myself we us our you u your ur they them it this that those these what which who '
+    'how can could would should may will please pls plz just some any there here so if not '
+    'command commands cmd cmds syntax usage trigger triggers prefix help list all every '
+    'tell show give get have has had want wanna need like use using type types make '
+    'myself yourself himself herself itself something anything someone anyone '
+    'search google lookup look find out about into that this'.split())
+_CMD_HELP_REFUSAL_RE = re.compile(
+    r"(?i)\b(?:no(?:t)?\s+(?:a\s+)?command\s+for\s+that|don'?t\s+have\s+a\s+command|"
+    r"do\s+not\s+have\s+a\s+command|you\s+don'?t\s+have\s+a\s+command|"
+    r"not\s+in\s+(?:my|the)\s+plugins|no\s+such\s+command|"
+    r"no\s+matching\s+command|not\s+one\s+of\s+(?:my|the)\s+(?:commands|plugins))\b")
+
+
+def _explicit_search_request(text):
+    """True when the (nick-stripped) message clearly asks to web-search / look up / google."""
+    return bool(_EXPLICIT_SEARCH_RE.search((text or '').strip()))
+
+
+def _cmd_help_should_disable_search(user_message, wants_sources=False, time_needs_lookup=False):
+    """Command-help answers skip web search unless the user asked for sources, a
+    sun-time lookup, or an explicit search / look-up / google."""
+    if wants_sources or time_needs_lookup:
+        return False
+    if _explicit_search_request(user_message):
+        return False
+    return True
+
+
+def _cmd_q_asks_about_bot(text, bot_nick=None):
+    t = text or ''
+    if bot_nick and re.search(r'\b' + re.escape(bot_nick) + r"(?:'s)?\b", t, re.IGNORECASE):
+        return True
+    return bool(_CMD_Q_BOT_OWN_RE.search(t))
+
+
+def _cmd_q_foreign_subject(text, by_name=None, plugin_names=None):
+    """True when the question names a substantial subject that isn't a bot command/plugin.
+
+    Only raw tokens are counted. Adjacent-pair joins from _cmd_words ("the"+"command"
+    -> "thecommand") would make every 'what is the command for X' look foreign.
+    """
+    t = text or ''
+    if _CMD_Q_EXTERNAL_RE.search(t):
+        return True
+    names = set(by_name or {})
+    plugins = set(plugin_names or ())
+    unknown = []
+    for w in re.findall(r"[a-z][a-z0-9_-]{2,}", t.lower()):
+        if w in _CMD_Q_META_WORDS or w in _CMD_STOPWORDS or w in _CMD_COMMON_WORDS:
+            continue
+        if w in names or w in plugins:
+            continue
+        unknown.append(w)
+    return len(set(unknown)) >= 2
+
 
 def _is_command_question(text, by_name=None, bot_nick=None, plugin_names=None, addressed=True):
-    """Cheap heuristic: is this a question about the bot's commands / how to do X with it?"""
+    """Cheap heuristic: is this a question about the bot's commands / how to do X with it?
+
+    The bare word "command" is not enough: questions about game cheats, console
+    codes, or other software must not be treated as bot-command help.
+    """
     t = (text or '').strip()
     if not t or len(t) > 600:
         return False
-    if _CMD_Q_DOLLAR_RE.search(t) or _CMD_Q_WORD_RE.search(t):
+    if _CMD_Q_DOLLAR_RE.search(t):
         return True
+    # "search/look up/google ..." is a web-search request, not bot-command help,
+    # unless they also clearly ask about this bot's own commands.
+    if _explicit_search_request(t) and not _cmd_q_asks_about_bot(t, bot_nick):
+        return False
+    if _CMD_Q_WORD_RE.search(t):
+        if _cmd_q_asks_about_bot(t, bot_nick):
+            return True
+        if by_name and _cmd_mentioned_names(t, by_name, strict=True):
+            return True
+        ws = set(_cmd_words(t))
+        if plugin_names and ws & set(plugin_names):
+            return True
+        if _cmd_q_foreign_subject(t, by_name, plugin_names):
+            return False
+        if _CMD_GENERIC_RE.search(t) or _CMD_Q_BARE_RE.search(t):
+            return True
+        return False
     _rq = _CMD_Q_REQUEST_RE.search(t) if addressed else None
     if _rq:
         # "gimme a coffee", "can i start a vote": an everyday-word command right
@@ -6216,12 +6531,6 @@ def _cmd_format_entry(e, prefix):
     for ex in e['examples']:
         line += f" | example: {ex}"
     return line
-
-
-_CMD_GENERIC_RE = re.compile(
-    r"\b(?:what|which|list|all|show|any|your|available)\b.{0,30}\b(?:commands?|cmds?)\b"
-    r"|\b(?:commands?|cmds?)\b.{0,20}\b(?:you\s+have|do\s+you|available|exist|list)\b"
-    r"|\bwhat\s+can\s+(?:you|u)\s+do\b", re.IGNORECASE)
 
 
 _CMD_OPPOSITE_PAIRS = (('join', 'part'), ('on', 'off'), ('add', 'del'), ('add', 'remove'), ('enable', 'disable'),
@@ -6323,9 +6632,12 @@ def _cmd_select(catalog, text, viewer_privileged, max_chars=_CMD_CATALOG_MAX_CHA
                 _ptot[pl] = _ptot.get(pl, 0) + score.get(id(e), 0)
         if _ptot:
             _top = max(_ptot, key=_ptot.get)
-            _mod = [e for e in by_plugin.get(_top, []) if _cmd_visible(e, viewer_privileged)]
-            _ids = {id(e) for e in _mod}
-            shown = _mod + [e for e in shown if id(e) not in _ids]
+            # A common-word hit like "give" scores 40 and must not dump the
+            # whole coins/gambling plugin into the prompt.
+            if _ptot[_top] >= 50:
+                _mod = [e for e in by_plugin.get(_top, []) if _cmd_visible(e, viewer_privileged)]
+                _ids = {id(e) for e in _mod}
+                shown = _mod + [e for e in shown if id(e) not in _ids]
     matched = bool(shown)
     lines, total, used = [], 0, []
     for e in shown:
@@ -6336,9 +6648,10 @@ def _cmd_select(catalog, text, viewer_privileged, max_chars=_CMD_CATALOG_MAX_CHA
         lines.append(ln)
         used.append(e)
         total += len(ln) + 1
-    generic = bool(_CMD_GENERIC_RE.search(text or '')) and all(e['name'] in ('help',) for e in used)
-    if (not shown and not picked) or generic:
-        # Generic "what can you do": compact index of visible commands/triggers per plugin.
+    generic = bool(_CMD_GENERIC_RE.search(text or '')) and (not used or all(e['name'] in ('help',) for e in used))
+    if generic:
+        # Generic "what can you do" / "what commands do you have" only — never
+        # dump the full index after a specific question that just didn't match.
         idx = {}
         for e in catalog['entries']:
             if not _cmd_visible(e, viewer_privileged) or e['kind'] == 'auto':
@@ -6432,8 +6745,13 @@ def _command_catalog_for(bot, trigger, user_message, is_pm):
         "Entries marked 'automatic' need no typing; just explain them. "
         "Inline triggers count as commands: if the user asks for 'the command' to do something an inline trigger does "
         "(for example giving karma with nick++), answer with that trigger. "
-        "Do not invent commands, triggers, aliases, or options that are not in the catalog. Only if nothing in the catalog "
-        "(commands, inline triggers, automatic behaviours) does what they want, say plainly that you don't have a command for that. "
+        "Do not invent commands, triggers, aliases, or options that are not in the catalog. "
+        "If the question is actually about a game, cheat, console code, or other software — not this bot's IRC commands — "
+        "ignore this catalog and answer that question helpfully (use web search results when available). "
+        "If the user corrects you (for example that it is a command for a game), drop the bot-command assumption and answer what they meant. "
+        "Only if they are asking about this bot and nothing in the catalog "
+        "(commands, inline triggers, automatic behaviours) does what they want, say plainly that you don't have a command for that, "
+        "and do not list unrelated $commands. "
         "This catalog is current and overrides anything said earlier in the conversation, including your own earlier answers. "
         "If a command undoes another (for example part vs join, del vs add), name it explicitly. "
         "Format (this overrides the single-line rule for this answer only): one short explanation line, then each "
@@ -6475,6 +6793,17 @@ def _split_command_lines(reply, prefix='$', limit=3, extra_res=()):
         elif s:
             rest.append(s)
     return '\n'.join(rest), cmds
+
+
+def _cmd_help_filter_lines(reply, cmd_lines):
+    """Drop ready-to-paste $command lines when the answer is a refusal, so they
+    are not sent as stray IRC lines after 'no command for that'."""
+    if not cmd_lines:
+        return reply, []
+    blob = (reply or '') + '\n' + '\n'.join(cmd_lines)
+    if _CMD_HELP_REFUSAL_RE.search(blob):
+        return reply, []
+    return reply, list(cmd_lines)
 
 
 _CMD_HISTORY_ANSWER_RE = re.compile(r"\b(?:commands?|cmds?|catalog|inline trigger)\b|(?:^|\s)\$[a-z]", re.IGNORECASE)
@@ -6603,6 +6932,10 @@ _NL_NOT_ITEMS = frozenset(('pass', 'random', 'food', 'snack', 'virgin'))
 # "give/hand/pour/serve/pass ..." phrasing ("give DmD karma" is not a karma lookup).
 _NL_LOOKUPS = frozenset(('karma', 'seen', 'coins', 'bal', 'inv', 'highscore', 'jail', 'stock', 'w', 'f', 'wiki',
                          'mootop', 'moocount', 'mymoo', 'toptip', 'barcash', 'barhelp', 'weedhelp'))
+# Words that measure out an item ("a slice of X", "a pint of X").
+_NL_MEASURE_WORDS = frozenset(('slice', 'slices', 'pint', 'pints', 'shot', 'shots', 'cup', 'cups', 'glass',
+                               'glasses', 'bowl', 'bowls', 'mug', 'bottle', 'can', 'piece', 'plate', 'bite',
+                               'round'))
 _NL_GIVE_VERB_RE = re.compile(r"\b(?:give|gimme|hand|pour|serve|pass|toss|throw)\b", re.IGNORECASE)
 
 
@@ -6731,6 +7064,26 @@ def _nl_parse_action(text, catalog, allowed, users, asker, bot_nick):
             break
     if not found:
         return None
+    # "a slice of turkey", "a pint of milk", "a shot of jager": a measure word
+    # names the item after "of". Use that item when it is on the menu; when it
+    # isn't, a measure-only synonym ("slice" -> pizza) must not swap it for
+    # something else, so let the AI hand over the real thing.
+    _fi, _fsize, _fval = found
+    _fph = ' '.join(words[_fi:_fi + _fsize])
+    if _fph in _NL_MEASURE_WORDS and _fi + _fsize < len(words) and words[_fi + _fsize] == 'of':
+        rest = words[_fi + _fsize + 1:]
+        while rest and rest[0] in ('a', 'an', 'the', 'some', 'that', 'this', 'your', 'ur', 'fresh', 'hot', 'cold'):
+            rest = rest[1:]
+        obj = None
+        for size in (3, 2, 1):
+            ph = ' '.join(rest[:size])
+            if len(rest) >= size and ph in vocab:
+                obj = vocab[ph]
+                break
+        if obj:
+            found = (_fi, _fsize, obj)
+        elif rest and (_fph not in allowed):
+            return None
     _, _, (cmd, style) = found
     if cmd in _NL_LOOKUPS and _NL_GIVE_VERB_RE.search(t):
         return None
@@ -7710,6 +8063,11 @@ def handle(bot, trigger, _intent_decided=False):
         )
     messages = [
         {"role": "system", "content": _active_system_prompt},
+        {"role": "system", "content": (
+            "To do an IRC /me emote, start the whole reply with the word ACTION and a space, "
+            "e.g. 'ACTION hands bob a turkey slice'. Never write '*action ...*', '[action]', "
+            "'/me' or 'action:' as text, and never put a nick in front of an emote."
+        )},
         {
             "role": "system",
             "content": (
@@ -7730,7 +8088,11 @@ def handle(bot, trigger, _intent_decided=False):
                 f"Do NOT use markdown links. If you can't find an exact URL, don't make one up. "
                 f"Single line only — this is IRC. No newlines. "
                 f"Do not end a reply with 'tbh', 'ngl', 'fr', or 'lmao'. "
-                f"Use 'lol' only when something is actually funny, not on an ordinary answer."
+                f"Use 'lol' only when something is actually funny, not on an ordinary answer. "
+                f"If {trigger.nick} asks for a command, cheat, or console code for a game or other software, "
+                f"answer that question helpfully — do not assume they mean your IRC $commands unless they "
+                f"clearly ask about your own bot commands. If they correct you, drop the earlier assumption "
+                f"and answer what they actually meant."
             ),
         },
         {"role": "system", "content": _UNTRUSTED_GUARD},
@@ -8315,7 +8677,7 @@ def handle(bot, trigger, _intent_decided=False):
                 _dropped = _cmd_help_inject(bot, messages, _cat_msgs)
                 _cmd_help_debug_dump(bot, messages, user_message, _dropped)
                 _cmd_help = list(_cat_res) or True
-                if not wants_sources and not _time_needs_lookup:
+                if _cmd_help_should_disable_search(user_message, wants_sources, _time_needs_lookup):
                     search_mode = False
         # A saved definition answers the question. Do not web-search it unless
         # the user explicitly asked for a search or for sources.
