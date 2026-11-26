@@ -234,3 +234,44 @@ def test_handle_history_and_log_filtering():
     blob = _handle_messages(b, 'glitchy roast me', nick='Raya')
     assert 'UNHINGED MODE:' in blob and 'LOG-VULGAR-s2' in blob and 'Unhinged mode is now OFF' not in blob
 
+
+def test_handle_answers_newest_speaker_not_pending_roast():
+    """2026-11-26 #Cyberspace: Golden1 asked for a roast of Vaggi, End3r said "fuck you glitchy"
+    a second later, and End3r's reply was another Vaggi roast."""
+    b = newbot('focus')
+    b.memory.update({'grok_session': object(), 'grok_chat_session': None, 'grok_api_disabled': False,
+                     'grok_last': ai._BoundedTTLCache(), 'grok_dedup_cache': ai._BoundedTTLCache(),
+                     'grok_user_last_cache': ai._BoundedTTLCache(), 'grok_api_failures': {}, 'grok_chimein_last': {},
+                     'grok_channel_personality': {}, 'grok_user_personality': {}, 'grok_learn_counters': {},
+                     'grok_stats': ai._fresh_ai_stats(time.time()), 'grok_last_prompt': {}, 'grok_fallback_openai': None,
+                     'grok_admin_ignored': set()})
+    b.config = SimpleNamespace(ai_multi=Cfg(system_prompt='persona'), core=SimpleNamespace(owner='x', admins=[], prefix=r'\$', help_prefix='$'))
+    now = time.time()
+    ai._db_set_channel_unhinged(b, '#cy', True)
+    b.memory['grok_channel_log']['#cy'] = deque([
+        ('Golden1', '$unhinged on', now - 10),
+        ('glitchy', 'Unhinged mode is ON for #cy.', now - 10),
+        ('Golden1', 'glitchy roast Vaggi nickname and her jokes', now - 1),
+        ('End3r', 'fuck you glitchy', now),
+    ], maxlen=300)
+    tr = SimpleNamespace(nick='End3r', sender='#cy', group=lambda n=0: 'fuck you glitchy',
+                         groups=lambda: ('fuck you glitchy',), tags={}, account=None, hostmask='End3r!u@h', host='h',
+                         user='u', ctcp=None, is_privmsg=False, admin=False, owner=False, plain='fuck you glitchy',
+                         args=['#cy', 'fuck you glitchy'], event='PRIVMSG', raw='', match=None,
+                         time=datetime.datetime.now(datetime.timezone.utc), urls=())
+    while not ai.API_TASK_QUEUE.empty(): ai.API_TASK_QUEUE.get_nowait()
+    ai.handle(b, tr, _intent_decided=True)
+    tasks = []
+    while not ai.API_TASK_QUEUE.empty(): tasks.append(ai.API_TASK_QUEUE.get_nowait())
+    assert tasks, ('no task', b.said)
+    msgs = tasks[-1]['messages']
+    assert tasks[-1]['trigger'].nick == 'End3r'
+    focus = [i for i, m in enumerate(msgs) if m['role'] == 'system' and 'The next user message is from End3r' in m['content']]
+    assert focus, msgs
+    note = msgs[focus[-1]]['content']
+    assert 'comeback aimed at End3r' in note and 'Golden1' in note
+    # Unhinged mode is still on, and the focus note comes after its reminder, right before the user turn.
+    rem = [i for i, m in enumerate(msgs) if m['role'] == 'system' and m['content'] == ai._UNHINGED_REMINDER]
+    assert rem and rem[-1] < focus[-1]
+    assert any('UNHINGED MODE:' in str(m['content']) for m in msgs)
+    assert msgs[-1]['role'] == 'user' and 'fuck you glitchy' in msgs[-1]['content']

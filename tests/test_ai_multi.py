@@ -281,8 +281,12 @@ def test_heuristic_addressed_lines(ai):
 
 
 def test_address_verdict_marks_long_mentions_as_maybe(ai):
-    line = "I wonder if glitchy saw the deploy notes from last night before the restart"
+    line = "I saw glitchy post the deploy notes from last night before the restart"
     assert ai._address_verdict(line, 'glitchy') == 'maybe'
+    assert _addressed(ai, line) is False
+    # "if glitchy ..." is talking about the bot, so it is a clear no now.
+    line = "I wonder if glitchy saw the deploy notes from last night before the restart"
+    assert ai._address_verdict(line, 'glitchy') == 'no'
     assert _addressed(ai, line) is False
     assert ai._address_verdict('glitchy: hello', 'glitchy') == 'yes'
     assert ai._address_verdict('that glitchy personality', 'glitchy') == 'no'
@@ -994,3 +998,37 @@ def test_send_turns_star_action_into_ctcp_action(ai, stateful_ai_bot):
     assert acted == [('swaps the pizza for a steaming turkey slice', '#chat')]
     ai.send(bot, '#chat', 'plain words')
     assert said == [('plain words', '#chat')]
+
+
+# --- each addressed line is answered for its own speaker ---------------------
+
+def test_other_addressed_nicks_finds_pending_requests(ai):
+    now = 1000.0
+    rows = [
+        ('Golden1', 'Vaggi has 3 nipples like in that movie with arnold', now - 70),
+        ('Golden1', '$unhinged on', now - 10),
+        ('glitchy', 'Unhinged mode is ON for #Cyberspace.', now - 10),
+        ('Golden1', 'glitchy roast Vaggi nickname and her jokes', now - 1),
+        ('End3r', 'fuck you glitchy', now),
+    ]
+    assert ai._other_addressed_nicks(rows, 'End3r', 'glitchy', now=now) == ['Golden1']
+    # The speaker's own lines don't count; someone who spoke after them does.
+    assert ai._other_addressed_nicks(rows[:-1], 'Golden1', 'glitchy', now=now) == []
+    assert ai._other_addressed_nicks(rows, 'Golden1', 'glitchy', now=now) == ['End3r']
+    # Old lines don't count.
+    assert ai._other_addressed_nicks(rows, 'End3r', 'glitchy', now=now + 600) == []
+
+
+def test_speaker_focus_note_targets_newest_speaker(ai):
+    note = ai._speaker_focus_note('End3r', 'glitchy', ['Golden1'])
+    assert 'from End3r' in note
+    assert 'comeback aimed at End3r' in note
+    assert 'Golden1' in note and 'do NOT carry them out' in note
+    plain = ai._speaker_focus_note('End3r', 'glitchy', [])
+    assert 'Golden1' not in plain and 'do NOT carry them out' not in plain
+    # The speaker and the bot are never listed as "others".
+    assert 'do NOT carry them out' not in ai._speaker_focus_note('End3r', 'glitchy', ['end3r', 'glitchy'])
+
+
+def test_unhinged_reminder_points_at_newest_message(ai):
+    assert 'newest message' in ai._UNHINGED_REMINDER

@@ -2075,7 +2075,7 @@ _UNHINGED_GUARD = (
 
 # Short closing reminder placed last (after history), since the full block sits near the top.
 _UNHINGED_REMINDER = (
-    "REMINDER: unhinged mode is on. Actually answer or do what was asked, savage and vulgar, with a brand-new joke "
+    "REMINDER: unhinged mode is on. Actually answer or do what the newest message asks, savage and vulgar, with a brand-new joke "
     "and angle. No mom-anatomy formula, no repeating your earlier insults or running gags. "
     "Only limits: no slurs (including 'retard'), no sexual content involving minors."
 )
@@ -3966,6 +3966,61 @@ def _saved_definition_user_note(message, facts):
         '[Saved definition for this user: ' + '; '.join(bits) +
         '. Answer with that meaning.]'
     )
+
+
+# How far back to look for other people's lines to the bot that are still being answered.
+SPEAKER_FOCUS_WINDOW = 180
+SPEAKER_FOCUS_SCAN = 15
+
+
+def _other_addressed_nicks(chan_rows, speaker, bot_nick, now=None, window=SPEAKER_FOCUS_WINDOW):
+    """Nicks (oldest first) of other people who spoke to the bot in the last `window` seconds.
+
+    chan_rows are channel-log (nick, text, ts) tuples, oldest first.
+    """
+    now = time.time() if now is None else now
+    spk = str(speaker or '').lower()
+    me = str(bot_nick or '').lower()
+    out = []
+    for row in list(chan_rows or [])[-SPEAKER_FOCUS_SCAN:]:
+        try:
+            n, t, ts = row[0], row[1], float(row[2])
+        except Exception:
+            continue
+        nl = str(n).lower()
+        if nl in (spk, me) or now - ts > window:
+            continue
+        try:
+            if _address_verdict(str(t), bot_nick) != 'yes':
+                continue
+        except Exception:
+            continue
+        if str(n) not in out:
+            out.append(str(n))
+    return out
+
+
+def _speaker_focus_note(speaker, bot_nick, others=()):
+    """Last-word instruction: reply to THIS speaker's message, not someone else's pending request.
+
+    Several people can talk to the bot within seconds. Each line gets its own API call,
+    but every call sees the same channel log, and the model used to keep doing the most
+    recent request in it (e.g. a roast someone else asked for) instead of answering the
+    newest speaker.
+    """
+    note = (
+        f"The next user message is from {speaker}. Reply to {speaker} and to that message only. "
+        f"If {speaker} insults, swears at or teases you, fire back at {speaker} with a comeback aimed at "
+        f"{speaker}; do not aim it at anyone else. The channel log and earlier turns are background only: "
+        f"do not continue your previous reply or its target unless {speaker} asks for more."
+    )
+    others = [o for o in (others or ()) if str(o).lower() not in (str(speaker).lower(), str(bot_nick).lower())]
+    if others:
+        note += (
+            " Requests to you from " + ", ".join(others) + " in the log are answered in their own replies; "
+            f"do NOT carry them out or repeat them for {speaker}."
+        )
+    return note
 
 
 def _compose_user_turn(message, facts):
@@ -8532,6 +8587,16 @@ def handle(bot, trigger, _intent_decided=False):
                         messages[_gi] = {"role": "system", "content": _UNHINGED_GUARD}
                 messages.insert(1, {"role": "system", "content": _unh_block})
                 messages.append({"role": "system", "content": _UNHINGED_REMINDER})
+
+        # Channel: name the speaker last, so another person's pending request in the
+        # channel log (e.g. "glitchy roast Vaggi") is not answered again for them.
+        if not is_pm:
+            try:
+                _focus_rows = list((bot.memory.get('grok_channel_log') or {}).get(str(trigger.sender).lower()) or ())
+                _focus_others = _other_addressed_nicks(_focus_rows, trigger.nick, bot_nick)
+            except Exception:
+                _focus_others = []
+            messages.append({"role": "system", "content": _speaker_focus_note(trigger.nick, bot_nick, _focus_others)})
 
         # After the unhinged reminder so this is the last system line before the question.
         _asker_facts = (user_profile or {}).get('facts') if user_profile else None
