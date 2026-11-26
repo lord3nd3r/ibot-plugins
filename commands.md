@@ -15,7 +15,7 @@ The examples use the **`$`** prefix (what the `glitchy` bot uses, `prefix = \$` 
 | [🧠 AI Chatbot](docs/ai-multi.md) | Talk to the bot via Grok, Ollama, or an OpenAI-compatible API; `$unhinged`, `$aistats`, `$aipardon` |
 | [🍺 Bartender](docs/beer.md) | Virtual bar with drinks, tips, and a unified coin economy |
 | [🌿 Weed & Trippy](docs/weed.md) | Themed smoke/trip messages with countdown animations (incl. `$hoss`) |
-| [💰 Coins & Mugging](docs/mug.md) | IRC economy — coins, mugging, bounties, shop, gambling |
+| [💰 Coins & Mugging](docs/mug.md) | IRC economy — coins, mugging, bounties, shop, gambling; `$godmode` is global and persistent |
 | [🛠️ Bot Admin](docs/botadmin.md) | `$restart`, `$breload`, `$bothelp` (other admin commands are in the ibot core) |
 | [🔍 IRC Oper Scanner](docs/operscan.md) | PM-only scanner to identify network/server IRC operators |
 | [🐄 Moo Counter](docs/moo.md) | Say moo to increment your counter, network leaderboards |

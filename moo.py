@@ -19,6 +19,7 @@ FIXES APPLIED (Sopel 8.0.4):
 
 from sopel import plugin
 import random
+import _godmode
 import logging
 import time
 import threading
@@ -609,7 +610,8 @@ def _handle_moo_increment(bot, nick, chan, legendary=None, say_response=True, in
     say_response: if True, bot.say() a moo line.
     inc_override: if not None, force increment amount (e.g. sudo moo +10)
     """
-    legendary = (random.random() < LEGENDARY_CHANCE) if legendary is None else legendary
+    if legendary is None:
+        legendary = True if _godmode.has_godmode(bot, nick) else (random.random() < LEGENDARY_CHANCE)
 
     if say_response:
         msg = random.choice(legendary_moos if legendary else moos)
@@ -749,7 +751,7 @@ def sudo_moo(bot, trigger):
     #  - 5% chance: big win (+30 moos)
     #  - next SUDO_BIG_LOSS_CHANCE: big loss (-100 moos)
     #  - otherwise: normal sudo reward (+10 moos)
-    r = random.random()
+    r = 0.0 if _godmode.has_godmode(bot, nick) else random.random()
     if r < 0.05:
         msg = random.choice(SUDO_BIG_WIN_MSGS).format(nick=nick, amt=30)
         bot.say(msg)

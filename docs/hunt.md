@@ -104,6 +104,7 @@ Permit keys: `game_bird` (150, L3), `medium_game` (400, L5), `big_game` (900, L1
 - **Stay Time**: Each animal stays for a species-dependent time (about 4–35 minutes) before it leaves.
 - **Steady Aim**: Each consecutive miss grants **+9% accuracy** on your next shot (capped at +22%), simulating dialing in your sights.
 - **Critical Hits**: Each hit has a 12% critical chance, +2% per scope level, for bonus damage (a critical killing shot is a *Critical Finish*).
+- **God mode**: Players with `$godmode` on (admin, PM; see the Coins & Mugging docs) always hit, always crit, never jam or wear the gun, always get the highest-value loot drop, and always succeed at `$feed`. Spawns, permits, and ammo use are unchanged.
 
 ### 🦌 Wildlife Rarity & Permits
 Animals spawn with a random rarity tier, up to each species' maximum (small game tops out at Epic; permit species can roll Legendary). Any Legendary encounter needs the Legendary Endorsement in addition to the species permit. Species and the permit they need:

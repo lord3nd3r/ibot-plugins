@@ -52,7 +52,9 @@ max_rate_per_15sec = 0
 |---------|--------|
 | `moo` (anywhere in message) | +1 moo (per-user cooldown, `moo_cooldown`) |
 | `/me moos` (also `moos!`, `moos?`, `moos.`) | +1 moo (shares the same cooldown as a typed moo) |
-| `sudo moo` | +10 moos (1/hour/user/channel, `sudo_cooldown`) |
+| `sudo moo` | +10 moos (1/hour/user/channel, `sudo_cooldown`); 5% big win (+30), rare big loss (-100) |
+
+**God mode:** If `$godmode` is on for you (admin, PM; see the Coins & Mugging docs), a normal moo is always legendary (+20) and `sudo moo` always takes the big win (+30), never the big loss.
 
 **Cooldowns are silent:** a moo during your cooldown is simply ignored (no channel message). For `sudo moo` you get at most one private NOTICE per cooldown window telling you how long is left. If `max_rate_per_15sec` is set and the channel hits the cap, extra moos are ignored too (a blocked `sudo moo` doesn't use up your hour).
 

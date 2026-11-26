@@ -323,7 +323,7 @@ enabled = true
 | `$mugdup <nick>` | List duplicate records |
 | `$mugclearbounty <nick>` | Clear all bounties on a nick |
 | `$mugtoggle [on\|off]` | Enable/disable per-channel |
-| `$godmode <nick>` | Toggle luck override (owner only) |
+| `$godmode [on\|off] [nick]` | Toggle global god luck (admin, PM only). Affects mugging, casino ($bet/$roll/$penny/$dollar/$roulette/$bj/$holdem), hunting, and moo. Persists across `$reload`, `$rehash`, and restarts. |
 | `$uncooldown <nick>` | Clear a user's 30-min flood lockout |
 | `$mugstats` | Show game statistics |
 

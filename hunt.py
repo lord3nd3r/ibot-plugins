@@ -43,6 +43,8 @@ from typing import Optional, Tuple, Dict, Any, List
 from sopel import plugin
 from sopel.config.types import StaticSection, ValidatedAttribute
 
+import _godmode
+
 LOG = logging.getLogger('sopel.modules.hunt')
 _sysrand = random.SystemRandom()
 
@@ -944,6 +946,7 @@ def _spawner_loop(bot):
 def setup(bot):
     _init_db()
     _load_channel_toggles(bot)
+    _godmode.load(bot)
     global _spawner_thread, _spawner_stop_event
     _spawner_stop_event.clear()
     _spawner_thread = threading.Thread(target=_spawner_loop, args=(bot,), daemon=True, name="HuntSpawnerThread")
@@ -1060,7 +1063,8 @@ def cmd_shoot(bot, trigger):
         bot.notice(f"[CONFISCATED] Your gun was confiscated! Buy it back in the shop with: {p}huntshop buy 5", nick)
         return
 
-    if hunter['gun_jammed']:
+    gm = _godmode.has_godmode(bot, nick)
+    if hunter['gun_jammed'] and not gm:
         bot.notice(f"[JAMMED] Your gun is jammed! Cycle the action with {p}reloadgun (or {p}unjam).", nick)
         return
 
@@ -1117,14 +1121,18 @@ def cmd_shoot(bot, trigger):
             return
 
     # 3. Weapon wear & jamming roll
-    cond_loss = _sysrand.uniform(0.1, 0.4)
-    lube_loss = _sysrand.uniform(0.4, 0.9)
-    jam_risk = 0.0
-    if hunter['gun_lubrication'] < 20.0:
-        jam_risk += (20.0 - hunter['gun_lubrication']) * 0.8
-    jam_risk = max(0.0, jam_risk - hunter['action_tune'] * 4.0)
-
-    is_jammed = (_sysrand.random() * 100.0) < jam_risk
+    if gm:
+        cond_loss = 0.0
+        lube_loss = 0.0
+        is_jammed = False
+    else:
+        cond_loss = _sysrand.uniform(0.1, 0.4)
+        lube_loss = _sysrand.uniform(0.4, 0.9)
+        jam_risk = 0.0
+        if hunter['gun_lubrication'] < 20.0:
+            jam_risk += (20.0 - hunter['gun_lubrication']) * 0.8
+        jam_risk = max(0.0, jam_risk - hunter['action_tune'] * 4.0)
+        is_jammed = (_sysrand.random() * 100.0) < jam_risk
 
     # Deduct ammo
     new_ammo = hunter['ammo'] - 1
@@ -1160,7 +1168,7 @@ def cmd_shoot(bot, trigger):
     cond_key = _channel_condition.get(chan_key, 'clear')
     accuracy = _calculate_accuracy(hunter, cond_key)
     hit_roll = _sysrand.random() * 100.0
-    hit = hit_roll < accuracy
+    hit = True if gm else (hit_roll < accuracy)
 
     next_acc = min(99, accuracy + 9)
 
@@ -1185,7 +1193,7 @@ def cmd_shoot(bot, trigger):
     # 6. Hit Logic & Critical Hit
     base_dmg = max(1, hunter['gun_level'])
     crit_chance = 12.0 + hunter['scope_level'] * 2.0
-    is_crit = (_sysrand.random() * 100.0) < crit_chance
+    is_crit = True if gm else ((_sysrand.random() * 100.0) < crit_chance)
     if is_crit:
         damage = base_dmg * 2
         crit_hit_str = f" {GOLD}CRITICAL HIT!{RESET}"
@@ -1227,8 +1235,8 @@ def cmd_shoot(bot, trigger):
     is_leg = 1 if target.rarity_key == 'legendary' else 0
 
     loot_drop = None
-    if target.loot_table and (_sysrand.random() < target.loot_chance):
-        loot_item = _sysrand.choice(target.loot_table)
+    if target.loot_table and (gm or _sysrand.random() < target.loot_chance):
+        loot_item = max(target.loot_table, key=lambda it: it[1]) if gm else _sysrand.choice(target.loot_table)
         loot_drop = loot_item[0]
         loot_val = loot_item[1]
         _add_to_bag(nick, loot_drop, target.name, target.rarity_key, loot_val)
@@ -1630,6 +1638,7 @@ def cmd_feed(bot, trigger):
 
     target = friendly[0]
 
+    gm = _godmode.has_godmode(bot, nick)
     food_used = None
     chance = 0.15
     if hunter['wildfeed'] > 0:
@@ -1649,7 +1658,7 @@ def cmd_feed(bot, trigger):
         conn.execute(f"UPDATE hunters SET {food_used} = {food_used} - 1 WHERE nick=?", (nick,))
         conn.commit()
 
-    if _sysrand.random() < chance:
+    if gm or _sysrand.random() < chance:
         with _animal_lock:
             if target in active:
                 active.remove(target)

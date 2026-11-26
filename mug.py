@@ -20,6 +20,8 @@ import logging
 from sopel import module
 from sopel.config.types import StaticSection, ValidatedAttribute
 
+import _godmode
+
 LOG = logging.getLogger(__name__)
 
 
@@ -48,6 +50,7 @@ def setup(bot):
     # Start auto-mode sweep thread
     if VOICE_ENABLED:
         _start_voice_sweep_thread(bot)
+    _godmode.load(bot)
 
 
 def configure(config):
@@ -63,10 +66,14 @@ def shutdown(bot):
     """Called by Sopel when the plugin is unloaded/reloaded."""
     _bot_proactive_stop.set()
     _voice_sweep_stop.set()
+    # Persist godmode so it survives $reload / $rehash; do not clear it.
+    try:
+        _godmode.save(bot)
+    except Exception:
+        LOG.exception("Failed to persist godmode on shutdown")
     # Clear global caches to avoid state leaks across reloads
-    global _channel_toggles, _godmode, _flood_lockout, _flood_history, _last_cmd, _give_history_loaded, _data
+    global _channel_toggles, _flood_lockout, _flood_history, _last_cmd, _give_history_loaded, _data
     _channel_toggles = None
-    _godmode.clear()
     _flood_lockout.clear()
     _flood_history.clear()
     _last_cmd.clear()
@@ -837,13 +844,13 @@ _give_history_loaded = False  # flag to avoid repeated DB loads
 # Items that have active $use behavior; everything else is passive
 USABLE_ITEMS = {'bail'}
 
-# God mode: set of normalized nicks with near-guaranteed luck (toggled via $godmode)
-_godmode: set[str] = set()
+# God mode: near-guaranteed luck, shared across plugins and persisted
+# via _godmode.py (bot.memory + bot.db + JSON). Toggled with $godmode.
 
 
-def _has_godmode(nick: str) -> bool:
+def _has_godmode(nick: str, bot=None) -> bool:
     """Return True if the nick currently has god mode enabled."""
-    return normalize_key(nick) in _godmode
+    return _godmode.has_godmode(bot, nick)
 
 
 def _check_identified(bot, trigger) -> bool:
@@ -1731,7 +1738,7 @@ def mug(bot, trigger):
 
             # Cloak dodge check (victim) - cap at 50% max to prevent 100% immunity
             immune = min(50, get_item_bonus(victim, "mug_immune_chance"))
-            if not _mug_happened and immune > 0 and _sysrand.randint(1, 100) <= immune:
+            if not _has_godmode(attacker_nick) and not _mug_happened and immune > 0 and _sysrand.randint(1, 100) <= immune:
                 attacker["last_mug"] = now
                 bot.say(
                     f"{prefix} 🕶️ {att_display} tries to mug {vic_display}, but {target_nick} vanishes into the shadows. No coins stolen! 👻 | {attacker_nick}: {fmt_coins(attacker['money'])} | {target_nick}: {fmt_coins(victim.get('money', 0))}"
@@ -1748,10 +1755,13 @@ def mug(bot, trigger):
                 _mug_happened = True
 
             if not _mug_happened:
-                pct_base = _sysrand.randint(SUCCESS_STEAL_MIN, SUCCESS_STEAL_MAX)
                 pct_bonus = min(30, get_item_bonus(attacker, "mug_steal_bonus_pct"))  # cap bonus at +30%
-
-                mega = (_sysrand.randint(1, 100) <= MUG_MEGA_STEAL_CHANCE_PCT)
+                if _has_godmode(attacker_nick):
+                    pct_base = SUCCESS_STEAL_MAX
+                    mega = True
+                else:
+                    pct_base = _sysrand.randint(SUCCESS_STEAL_MIN, SUCCESS_STEAL_MAX)
+                    mega = (_sysrand.randint(1, 100) <= MUG_MEGA_STEAL_CHANCE_PCT)
                 if mega:
                     steal_pct = max(0, pct_base + pct_bonus + MUG_MEGA_STEAL_BONUS_PCT)
                 else:
@@ -2521,6 +2531,15 @@ def _bj_draw(deck):
     return deck.pop()
 
 
+def _bj_draw_for_player(deck, hand, godmode=False):
+    """Draw a card. If godmode, prefer a card that will not bust."""
+    if godmode and deck:
+        for i, card in enumerate(deck):
+            if _bj_hand_value(hand + [card]) <= 21:
+                return deck.pop(i)
+    return _bj_draw(deck)
+
+
 def _bj_is_blackjack(hand):
     return len(hand) == 2 and _bj_hand_value(hand) == 21
 
@@ -2710,8 +2729,8 @@ def blackjack_hit(bot, trigger):
         if game['doubled']:
             bot.reply("🃏 Double down in progress — your hand is resolving.")
             return
-        # Draw from the game's deck
-        card = _bj_draw(game['deck'])
+        # Draw from the game's deck (godmode: never bust if a safe card remains)
+        card = _bj_draw_for_player(game['deck'], game['hand'], godmode=_has_godmode(trigger.nick))
         game['hand'].append(card)
         hand_val = _bj_hand_value(game['hand'])
 
@@ -2788,7 +2807,7 @@ def blackjack_double_down(bot, trigger):
             stale = True
         else:
             game['amount'] *= 2
-            card = _bj_draw(game['deck'])
+            card = _bj_draw_for_player(game['deck'], game['hand'], godmode=_has_godmode(trigger.nick))
             game['hand'].append(card)
 
     if stale:
@@ -3635,7 +3654,7 @@ def mugstats(bot, trigger):
 
 @module.commands('godmode')
 def godmode(bot, trigger):
-    """PM: $godmode [on|off] [nick] — toggle god luck (admin only)"""
+    """PM: $godmode [on|off] [nick] — toggle global god luck (admin only). Persists across reload/rehash/restart."""
     if not _pm_only(trigger):
         bot.reply("📩 Use this in PM, not in-channel.")
         return
@@ -3648,23 +3667,22 @@ def godmode(bot, trigger):
     # No args: show current status for self
     if not args:
         nk = normalize_key(trigger.nick)
-        status = "✅ ON" if nk in _godmode else "❌ OFF"
+        status = "✅ ON" if _godmode.has_godmode(bot, trigger.nick) else "❌ OFF"
         _pm(bot, trigger.nick, f"🔱 God mode for {trigger.nick}: {status}")
         # Also list anyone else with god mode
-        others = [n for n in _godmode if n != nk]
+        others = [n for n in _godmode.list_nicks(bot) if n != nk]
         if others:
             _pm(bot, trigger.nick, f"👑 Others with god mode: {', '.join(others)}")
         return
 
     action = args[0].lower()
     target = args[1] if len(args) > 1 else str(trigger.nick)
-    nk = normalize_key(target)
 
     if action in ('on', 'enable', 'true', '1'):
-        _godmode.add(nk)
-        _pm(bot, trigger.nick, f"🔱 God mode ENABLED for {target}. 99% luck on everything. 😈")
+        _godmode.set_godmode(bot, target, True)
+        _pm(bot, trigger.nick, f"🔱 God mode ENABLED for {target}. 99% luck on mugging, casino, hunting, moo, and other luck games. Survives reload. 😈")
     elif action in ('off', 'disable', 'false', '0'):
-        _godmode.discard(nk)
+        _godmode.set_godmode(bot, target, False)
         _pm(bot, trigger.nick, f"🔱 God mode DISABLED for {target}. Back to mortal luck. 💨")
     else:
         _pm(bot, trigger.nick, "Usage: $godmode [on|off] [nick] — no args = check status")
@@ -3847,7 +3865,7 @@ def mughelp(bot, trigger):
         "  • $mugdup <nick> — list stored records that normalize to the same nick (admin only)",
         "  • $mugclearbounty <nick> — remove a bounty (coins are NOT refunded) (admin only)",
         "  • $mugstats — PM economy overview: user count, top 5, total coins (admin only)",
-        "  • $godmode [on|off] [nick] — toggle 99% luck for yourself or a player (PM, admin only)",
+        "  • $godmode [on|off] [nick] — toggle global 99% luck (casino, mug, hunt, moo); persists across reload (PM, admin only)",
         "  • $uncooldown <nick> — clear a user's 30-min flood lockout (PM, admin only)",
         "  • $mugtoggle [on|off] — enable/disable the mug game in the current channel (in-channel or PM)",
         "    - In PM: $mugtoggle #channel [on|off] — target a specific channel",
